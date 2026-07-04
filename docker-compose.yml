@@ -1,0 +1,152 @@
+# What is docker?
+# Docker is a tool that lets you package an application and its dependencies into a "container" that can run anywhere. A container is like a lightweight virtual machine, but it shares the host system's kernel, making it faster and more efficient.
+#
+# =============================================================================
+# LESSON: WHAT IS DOCKER COMPOSE? (read this top-to-bottom before editing)
+# =============================================================================
+#
+# 📦 RECAP: WHAT IS A CONTAINER?
+# A container is a lightweight, standalone package that runs ONE app together
+# with everything it needs (code, libraries, settings). Think of it like a
+# single shipping container: it holds one thing, ready to run.
+#
+# 🏗️  WHAT IS A "MULTI-CONTAINER" APP?
+# Real apps are rarely one thing. They're made of several pieces that work
+# together. This project (AI Code Review & DevSecOps Platform) is a good example:
+#   - 🌐 A Go API server        → talks to the database + queues jobs
+#   - 🗄️  PostgreSQL database     → stores users, repos, PRs, runs, findings
+#   - 🗃️  Redis queue              → holds jobs until a worker picks them up
+#   - ⚙️  A Python Celery worker  → pulls jobs from Redis and runs them
+#   - 🐍 A Python FastAPI service → the AI review brain
+#   - 🖥️  A Next.js web dashboard  → UI for users
+# Each of these runs in its OWN container. That's "multi-container."
+#
+# ❓ WHY NOT ONE BIG CONTAINER?
+# You *could* cram everything into one container, but it's bad practice. Splitting
+# into separate containers gives you:
+#   • Isolation    — a database crash won't take down the web server
+#   • Scalability  — run 3 web containers but only 1 database
+#   • Reusability  — use the official PostgreSQL image instead of building your own
+#
+# 😖 THE PROBLEM DOCKER COMPOSE SOLVES
+# Running multiple `docker run` commands by hand is painful and error-prone, and
+# impossible to share with teammates:
+#   docker run -d --name db -e POSTGRES_PASSWORD=secret postgres
+#   docker run -d --name cache redis
+#   docker run -d --name web -p 8080:8080 myapp
+#   ...and remember the right flags, order, networks, volumes every time.
+#
+# ✅ WHAT DOCKER COMPOSE DOES
+# Instead, you describe all your containers ONCE in this YAML file, then a
+# single command starts the whole stack:
+#       docker compose up -d      ← start everything in the background
+#       docker compose down        ← stop everything and clean up
+#       docker compose logs -f     ← follow logs from all services
+#       docker compose ps          ← list running services
+#
+# 🧠 KEY CONCEPTS YOU'LL SEE BELOW
+#   services:   the list of containers to run (each entry = one container)
+#   image:      use a prebuilt container (e.g. postgres:16-alpine)
+#   build:      build a container from a Dockerfile instead of using an image
+#   ports:      "HOST_PORT:CONTAINER_PORT" — expose a port to your laptop
+#   volumes:     named storage that survives container restarts (data persistence)
+#   environment: environment variables passed into the container (config/secrets)
+#   healthcheck:  how Docker knows a container is "ready", not just "running"
+#   depends_on:   start order + (optionally) wait for another service to be healthy
+#
+# 🔗 HOW SERVICES TALK TO EACH OTHER
+# Compose automatically creates a shared network. A service can reach another one
+# by its NAME. For example, the Go API connects to PostgreSQL using the hostname
+# `postgres` (not `localhost`). This is why service names matter.
+#
+# 📝 STRUCTURE OF THIS FILE
+#   1. version:  the Compose file format (modern Compose ignores it; kept for clarity)
+#   2. services: the containers — read each block like a mini spec for one app
+#   3. volumes:  named storage declared once, referenced by services above
+#
+# 🚀 YOUR FIRST RUN (after reading this)
+#   docker compose up -d         # start PostgreSQL + Redis in the background
+#   docker compose ps            # confirm both are "Up (healthy)"
+#   docker exec ai-review-postgres psql -U review -d ai_review -c "SELECT 1;"
+#   docker exec ai-review-redis redis-cli ping   # should print PONG
+#   docker compose down          # stop and remove the containers
+#
+# NOTE: Data in the named volumes (postgres_data, redis_data) survives `down`.
+#       To wipe the data too, run:  docker compose down -v
+#
+# This file currently sets up only the infrastructure (PostgreSQL + Redis) for
+# Day 1 of the implementation guide. Later days will add api, worker, ai-service,
+# and web services here as you build them.
+# =============================================================================
+
+version: "3.9"
+
+# -----------------------------------------------------------------------------
+# SERVICES — each entry below is one container in our multi-container app.
+# Read each block like a small spec sheet for that app.
+# -----------------------------------------------------------------------------
+services:
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # SERVICE 1: PostgreSQL (the database)
+  # ───────────────────────────────────────────────────────────────────────────
+  # WHAT: A relational database. Our app stores users, repos, PRs, runs, jobs,
+  #       and AI findings here.
+  # WHY A CONTAINER: We use the official postgres image so we don't have to
+  #                  install/configure PostgreSQL on our laptop. One command
+  #                  and it's running, identical on every machine.
+  # HOW THE APP USES IT: The Go API connects to host `postgres` on port 5432.
+  # ───────────────────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine            # prebuilt image: PG 16 on Alpine Linux (small)
+    container_name: ai-review-postgres   # fixed name so we can target it in commands
+    environment:
+      # These variables initialize the database on first boot.
+      POSTGRES_USER: review              # username the app will connect with
+      POSTGRES_PASSWORD: reviewpass       # password (dev only! real secrets go in .env)
+      POSTGRES_DB: ai_review             # database name created automatically
+    ports:
+      - "5432:5432"                      # HOST:CONTAINER — expose so API on laptop can reach it
+    volumes:
+      # Named volume keeps the data on disk, so it survives `docker compose down`.
+      # Format: VOLUME_NAME:PATH_INSIDE_CONTAINER
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # Docker runs this command periodically to decide if the container is "healthy".
+      # Other services can use `depends_on: condition: service_healthy` to wait for it.
+      test: ["CMD-SHELL", "pg_isready -U review"]
+      interval: 5s                       # check every 5 seconds
+      timeout: 5s                        # give the check 5s to respond
+      retries: 5                        # after 5 consecutive failures, mark unhealthy
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # SERVICE 2: Redis (the queue)
+  # ───────────────────────────────────────────────────────────────────────────
+  # WHAT: An in-memory data store. We use it as a JOB QUEUE.
+  # WHY A QUEUE: When a webhook says "analyze this PR", the API shouldn't do the
+  #              slow work itself. It puts a job on Redis and returns immediately.
+  #              A worker later pulls the job and does the heavy lifting.
+  # HOW THE APP USES IT: The Go API pushes jobs; the Celery worker pulls them.
+  # ───────────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine               # prebuilt image: Redis 7 on Alpine Linux
+    container_name: ai-review-redis      # fixed name for easy targeting
+    ports:
+      - "6379:6379"                      # HOST:CONTAINER — Redis default port
+    volumes:
+      - redis_data:/data                 # persist Redis data across restarts
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"] # ask Redis "are you there?"
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+# -----------------------------------------------------------------------------
+# VOLUMES — named storage managed by Docker.
+# Declared here at the top level, referenced by services above.
+# Docker creates and stores these on your disk; the data survives when
+# containers are removed. Run `docker compose down -v` to delete the data.
+# -----------------------------------------------------------------------------
+volumes:
+  postgres_data:
+  redis_data:
