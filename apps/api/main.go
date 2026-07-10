@@ -1,16 +1,19 @@
 package main
 
 import (
-	"log" // print messages to the terminal
+	"context"
+	"log"      // print messages to the terminal
 	"net/http" //Go's built-in tool to create an HTTP server.
 
-	"os"  //read environment variables (like `PORT`).
+	"os" //read environment variables (like `PORT`).
 
-	"github.com/go-chi/chi/v5"// chi=a lightweight router (decides which URL goes to which function)
+	"github.com/go-chi/chi/v5"            // chi=a lightweight router (decides which URL goes to which function)
 	"github.com/go-chi/chi/v5/middleware" //helpers that run before/after requests (logging, recovery, etc.).
 
 	"github.com/joho/godotenv" //reads variables from a `.env` file.
 
+	"github.com/goldenk23/ai-devsecops-reviewer/api/internal/auth"
+	"github.com/goldenk23/ai-devsecops-reviewer/api/internal/database"
 )
 
 func main() {
@@ -25,6 +28,16 @@ func main() {
 		port = "8000" // default port if not specified
 	}
 
+	// connect to the database
+	dbpool, err := database.NewPool(context.Background())
+	if err != nil {
+		log.Fatalf("Error connecting to the database: %v", err)
+	}
+	defer dbpool.Close() // close the database connection when the main function exits
+	log.Println("Connected to the PostgreSQL database")
+
+	// create the auth handler
+	authHandler := &auth.Handler{DB: dbpool}// create the auth handler with the database connection
 	// Create a new chi router
 	r := chi.NewRouter()
 
@@ -38,6 +51,9 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 	})
+	// Auth routes
+	r.Get("/auth/github", authHandler.LoginHandler)
+	r.Get("/auth/github/callback", authHandler.CallbackHandler)
 
 	// Api routes
 	r.Route("/api", func(r chi.Router) {
