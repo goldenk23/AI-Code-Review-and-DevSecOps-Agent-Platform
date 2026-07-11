@@ -15,6 +15,7 @@ import (
 	"github.com/goldenk23/ai-devsecops-reviewer/api/internal/auth"
 	"github.com/goldenk23/ai-devsecops-reviewer/api/internal/database"
 	"github.com/goldenk23/ai-devsecops-reviewer/api/internal/webhook"
+	"github.com/goldenk23/ai-devsecops-reviewer/api/internal/github"
 )
 
 func main() {
@@ -39,7 +40,8 @@ func main() {
 
 	// create the auth handler
 	authHandler := &auth.Handler{DB: dbpool}// create the auth handler with the database connection
-	webhookHandler := &webhook.Handler{DB: dbpool} // GitHub and Queue will be added later
+	ghclient :=github.NewClient() // create a new GitHub client
+	webhookHandler := &webhook.Handler{DB: dbpool, GitHub: ghclient} // GitHub and Queue will be added later
 	// Create a new chi router
 	r := chi.NewRouter()
 
