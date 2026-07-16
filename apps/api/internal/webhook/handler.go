@@ -13,6 +13,7 @@ import (
 	"os"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/goldenk23/ai-devsecops-reviewer/api/internal/queue"
 )
 // Handler struct holds dependencies for webhook processing
 type Handler struct {
@@ -26,7 +27,7 @@ type GitHubClientInterface interface {
 }
 
 type QueueClientInterface interface {
-	EnqueueAnalysis(ctx context.Context, payload QueuePayload) error
+	EnqueueAnalysis(ctx context.Context, payload queue.Payload) error
 }
 
 // QueuePayload represents the data sent to the celery worker
@@ -203,7 +204,7 @@ func(h *Handler) HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	*/
 
 	if h.Queue != nil {
-		err = h.Queue.EnqueueAnalysis(ctx, QueuePayload{
+		err = h.Queue.EnqueueAnalysis(ctx, queue.Payload{
 			RunID:        runID,
 			RepoFullName: payload.Repository.FullName,
 			PRNumber:     payload.PullRequest.Number,

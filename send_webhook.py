@@ -1,20 +1,22 @@
-import hmac, hashlib, json, sys, urllib.request
+import hmac, hashlib, json, sys, time, urllib.request
 
 secret = b"testsecret123"
+
+REPO_FULL_NAME = "goldenk23/AI-Code-Review-and-DevSecOps-Agent-Platform"
 
 payload = {
     "action": "opened",
     "pull_request": {
         "number": 1,
         "title": "Test PR",
-        "head": {"sha": "abc123", "ref": "feature/test"},
-        "user": {"login": "testuser"},
+        "head": {"sha": f"test{int(time.time())}", "ref": "main"},
+        "user": {"login": "goldenk23"},
     },
     "repository": {
         "id": 123,
-        "name": "test",
-        "full_name": "test/repo",
-        "owner": {"login": "test"},
+        "name": "AI-Code-Review-and-DevSecOps-Agent-Platform",
+        "full_name": REPO_FULL_NAME,
+        "owner": {"login": "goldenk23"},
     },
 }
 
