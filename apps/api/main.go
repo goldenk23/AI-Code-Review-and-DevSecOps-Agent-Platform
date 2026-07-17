@@ -20,6 +20,21 @@ import (
 	"github.com/goldenk23/ai-devsecops-reviewer/api/internal/api"
 )
 
+// corsMiddleware adds CORS headers so the browser (localhost:3000) can call
+// this API (localhost:8080) without being blocked by the same-origin policy.
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func main() {
 	
 	// load .env file
@@ -55,6 +70,7 @@ func main() {
 	r := chi.NewRouter()
 
 	// Add middleware (these run on every request)
+	r.Use(corsMiddleware)       // allow cross-origin requests from the frontend
 	r.Use(middleware.Logger)    // log each request
 	r.Use(middleware.Recoverer) // recover from panics so the server doesn't crash
 	r.Use(middleware.RequestID) // add a unique ID to each request for 

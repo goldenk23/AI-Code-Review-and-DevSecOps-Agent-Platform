@@ -1,0 +1,28 @@
+rules:
+  - id: js-sql-injection-string-concat
+    patterns:
+      - pattern: $QUERY("..." + $INPUT)
+    message: "Possible SQL injection: query built via string concatenation with user input"
+    languages: [javascript]
+    severity: WARNING
+    metadata:
+      category: security
+  - id: js-hardcoded-secret
+    patterns:
+      - pattern: const $VAR = "..."
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i)(key|secret|password|token)
+    message: "Hardcoded secret detected"
+    languages: [javascript]
+    severity: ERROR
+    metadata:
+      category: security
+  - id: js-command-injection
+    patterns:
+      - pattern: exec("..." + $INPUT)
+    message: "Possible command injection: exec called with string concatenation"
+    languages: [javascript]
+    severity: ERROR
+    metadata:
+      category: security

@@ -3,6 +3,7 @@ import json
 import subprocess # run other programs from inside Python. We use this to call git clone, git checkout, and npm test as if we were typing them in the terminal.
 import time
 import tempfile
+import stat
 import shutil #shutil → "shell utility" — high-level file operations like copying and deleting whole folders. We use shutil.rmtree to wipe the workspace at the end.
 import psycopg2 #shutil → "shell utility" — high-level file operations like copying and deleting whole folders. We use shutil.rmtree to wipe the workspace at the end.
 import redis
@@ -78,8 +79,19 @@ def process_job(job_data):
         """
         test_job_id = create_job(cursor, run_id, "test")
         test_command = detect_test_command(workspace)
-        print(f"Detected test command for run #{run_id}: {' '.join(test_command)}")
-        run_command(cursor, db, test_job_id, workspace, test_command)
+        if test_command is None:
+            cursor.execute(
+                "UPDATE analysis_jobs SET status = 'completed', exit_code = 0, logs = 'no tests configured for this project', completed_at = now() WHERE id = %s",
+                (test_job_id,)
+            )
+            db.commit()
+            print(f"No tests configured for run #{run_id}; skipping test step.")
+        else:
+            print(f"Detected test command for run #{run_id}: {' '.join(test_command)}")
+            run_command(cursor, db, test_job_id, workspace, test_command)
+            run_semgrep(cursor, db, run_id, workspace)
+            run_npm_audit(cursor, db, run_id, workspace)
+            
         
         # Step 4: Update run status to 'completed'
         cursor.execute(
@@ -99,18 +111,32 @@ def process_job(job_data):
     finally:
         # Clean up the workspace
         if workspace and os.path.exists(workspace):
-            shutil.rmtree(workspace)
+            safe_rmtree(workspace)
         cursor.close()
         db.close()
         
 
+def safe_rmtree(path):
+    """Like shutil.rmtree, but handles read-only files (git pack files are read-only on Windows)."""
+    def _on_error(func, p, _exc_info):
+        try:
+            os.chmod(p, stat.S_IWRITE)
+            func(p)
+        except OSError:
+            pass
+    try:
+        shutil.rmtree(path, onexc=_on_error)
+    except TypeError:
+        shutil.rmtree(path, onerror=_on_error)
+
+
 def detect_test_command(workspace):
-    """Pick the right test command based on the files present in the repo."""
+    """Pick the right test command based on the files present in the repo. Returns None if no tests are configured."""
     if os.path.exists(os.path.join(workspace, "package.json")):
         return ["npm", "test"]
     if os.path.exists(os.path.join(workspace, "requirements.txt")) or os.path.exists(os.path.join(workspace, "pyproject.toml")):
         return ["pytest", "-q"]
-    return ["echo", "no tests configured for this project"]
+    return None
 
 
 def create_job(cursor, run_id, job_type):
@@ -141,6 +167,106 @@ def run_command(cursor, db, job_id, workspace, command):
         )
         db.commit()
         raise Exception(f"Command {command} timed out")
+    
+def run_semgrep(cursor, db, run_id, workspace):
+    """Run Semgrep security scan and save findings to the database."""
+    job_id = create_job(cursor, run_id, "semgrep")
+    
+    # Use custom rules if available, otherwise fall back to auto
+    custom_rules = os.path.join(os.path.dirname(__file__), "custom_semgrep_rule.yml")
+    config = custom_rules if os.path.exists(custom_rules) else "auto"
+    
+    try:
+        result = subprocess.run(
+            ["semgrep", "scan", "--json", f"--config={config}", workspace],
+            capture_output=True, text=True, timeout=120
+        )
+        
+        semgrep_output = json.loads(result.stdout)
+        
+        cursor.execute(
+            "UPDATE analysis_jobs SET status = 'completed', exit_code = %s, logs = %s, completed_at = now() WHERE id = %s",
+            (result.returncode, result.stdout, job_id)
+        )
+        db.commit()
+        
+        for finding in semgrep_output.get("results", []):
+            severity = map_semgrep_severity(finding.get("extra", {}).get("severity", "INFO"))
+            cursor.execute(
+                """INSERT INTO findings (run_id, file_path, line_start, line_end, severity, category, 
+                   title, description, evidence, confidence, verification_status)
+                   VALUES (%s, %s, %s, %s, %s, 'security', %s, %s, %s, 0.9, 'verified_by_static_analysis')""",
+                (run_id, finding.get("path", ""), 
+                 finding.get("start", {}).get("line"),
+                 finding.get("end", {}).get("line"),
+                 severity,
+                 finding.get("check_id", "semgrep finding"),
+                 finding.get("extra", {}).get("message", ""),
+                 finding.get("extra", {}).get("lines", ""))
+            )
+        db.commit()
+        print(f"Semgrep found {len(semgrep_output.get('results', []))} issues")
+        
+    except Exception as e:
+        cursor.execute(
+            "UPDATE analysis_jobs SET status = 'failed', exit_code = 1, logs = %s, completed_at = now() WHERE id = %s",
+            (str(e), job_id)
+        )
+        db.commit()
+        raise
+
+def map_semgrep_severity(semgrep_severity):
+    mapping = {"ERROR": "high", "WARNING": "medium", "INFO": "low"}
+    return mapping.get(semgrep_severity.upper(), "low")
+
+
+def run_npm_audit(cursor, db, run_id, workspace):
+    """Run npm audit and save vulnerable dependencies as findings."""
+    job_id = create_job(cursor, run_id, "npm_audit")
+    
+    try:
+        result = subprocess.run(
+            ["npm", "audit", "--json"],
+            cwd=workspace, capture_output=True, text=True, timeout=60
+        )
+        
+        cursor.execute(
+            "UPDATE analysis_jobs SET status = 'completed', exit_code = %s, logs = %s, completed_at = now() WHERE id = %s",
+            (result.returncode, result.stdout, job_id)
+        )
+        db.commit()
+        
+        try:
+            audit = json.loads(result.stdout)
+            vulnerabilities = audit.get("vulnerabilities", {})
+            
+            for pkg_name, pkg_info in vulnerabilities.items():
+                severity = pkg_info.get("severity", "low")
+                via_list = pkg_info.get("via", [])
+                via_str = ", ".join(str(v) for v in via_list) if via_list else "unknown"
+                
+                cursor.execute(
+                    """INSERT INTO findings (run_id, file_path, severity, category, title, description, 
+                       confidence, verification_status)
+                       VALUES (%s, 'package.json', %s, 'dependency_risk', %s, %s, 0.95, 'verified_by_static_analysis')""",
+                    (run_id, severity,
+                     f"Vulnerable dependency: {pkg_name}",
+                     f"Package '{pkg_name}' has {severity} severity vulnerability. Via: {via_str}")
+                )
+            db.commit()
+            print(f"npm audit found {len(vulnerabilities)} vulnerable packages")
+            
+        except json.JSONDecodeError:
+            print("npm audit output was not valid JSON")
+            
+    except Exception as e:
+        cursor.execute(
+            "UPDATE analysis_jobs SET status = 'failed', logs = %s, completed_at = now() WHERE id = %s",
+            (str(e), job_id)
+        )
+        db.commit()
+        raise
+
     
 def main():
     """ main worker loop: fetch jobs from Redis and process them. """
