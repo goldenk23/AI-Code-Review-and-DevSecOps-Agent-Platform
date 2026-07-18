@@ -16,7 +16,7 @@
 
 @theme {
   /* ---------- SURFACES ---------- */
-  --color-background: #0a0a0a;
+  --color-background: #131313;
   --color-surface: #131313;
   --color-surface-dim: #131313;
   --color-surface-bright: #3a3939;
@@ -45,6 +45,10 @@
   --color-on-primary: #1000a9;
   --color-on-primary-container: #0d0096;
   --color-inverse-primary: #494bd6;
+
+  /* Accent / brand */
+  --color-accent: #6366f1;
+  --color-accent-hover: #4f46e5;
 
   /* ---------- SECONDARY (neutral) ---------- */
   --color-secondary: #c8c6c5;
@@ -128,7 +132,8 @@
   --spacing-gutter: 1rem;
   --spacing-margin-page: 2rem;
 
-  /* max-w-container-max works via the --container-* namespace in v4. */
+  /* Tailwind v4 generates max-w-* utilities from the --container-* namespace,
+     NOT --spacing-*. This is what makes `max-w-container-max` actually resolve. */
   --container-container-max: 1200px;
 }
 
@@ -140,12 +145,73 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Material Symbols Outlined -- the icon font used throughout the Stitch
+   designs. The font is loaded via CDN <link> in layout.tsx. */
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  font-size: 24px;
+  line-height: 1;
+  vertical-align: middle;
+  width: 1em;
+  height: 1em;
+  overflow: hidden;
+}
+.material-symbols-outlined.icon-fill {
+  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+/* Map Tailwind size-* utilities to font-size for Material Symbols (font icons
+   are sized by font-size, not width/height). */
+.material-symbols-outlined.size-3 { font-size: 0.75rem; }
+.material-symbols-outlined.size-3\.5 { font-size: 0.875rem; }
+.material-symbols-outlined.size-4 { font-size: 1rem; }
+.material-symbols-outlined.size-5 { font-size: 1.25rem; }
+.material-symbols-outlined.size-6 { font-size: 1.5rem; }
+.material-symbols-outlined.size-7 { font-size: 1.75rem; }
+.material-symbols-outlined.size-8 { font-size: 2rem; }
+.material-symbols-outlined.size-9 { font-size: 2.25rem; }
+.material-symbols-outlined.size-10 { font-size: 2.5rem; }
+
 /* Tiny utility: hide scrollbars on a scroll area (used by code blocks). */
 .scrollbar-hide::-webkit-scrollbar { display: none; }
 .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Custom dark-theme scrollbar (matches the Repositories / Security designs). */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--color-surface); }
+::-webkit-scrollbar-thumb { background: var(--color-surface-container-high); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-surface-container-highest); }
+
+/* Subtle grid background for the auth screen's "terminal" feel. */
+.bg-grid-pattern {
+  background-size: 40px 40px;
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+}
+
+/* Soft indigo glow used behind the auth card. */
+.blur-orb {
+  position: absolute;
+  width: 300px;
+  height: 300px;
+  background: radial-gradient(circle, rgba(192, 193, 255, 0.15) 0%, rgba(19, 19, 19, 0) 70%);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Scanning sweep used on "in progress" repository cards. */
+@keyframes scan {
+  0% { transform: translateY(-50%); }
+  50% { transform: translateY(0%); }
+  100% { transform: translateY(-50%); }
+}
+.animate-scan { animation: scan 3s ease-in-out infinite; }
 
 /* Respect users who don't want motion -- disables the "running" pulse. */
 @media (prefers-reduced-motion: reduce) {
   .animate-ping { animation: none; }
   .animate-pulse { animation: none; }
+  .animate-scan { animation: none; }
+  .animate-spin { animation: none; }
 }

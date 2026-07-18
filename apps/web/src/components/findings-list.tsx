@@ -45,13 +45,23 @@ export function FindingsList({ findings, isLoading }: { findings: Finding[]; isL
     });
   }, [findings, severity, category, verified]);
 
+  // Whether any filter is active -- used to show a "Clear" affordance.
+  const hasFilters = severity !== "all" || category !== "all" || verified !== "all";
+
   return (
     <section className="flex flex-col gap-4 mt-4">
       <div className="flex justify-between items-end border-b border-border-dark pb-2 flex-wrap gap-2">
+        {/* Count reflects the FILTERED set, not the total -- so when a user
+            applies a filter the number updates to match what they see. */}
         <h2 className="font-subheading text-subheading text-text-primary">
-          Findings ({findings.length})
+          Findings ({filtered.length})
+          {hasFilters && (
+            <span className="font-caption text-caption text-text-muted ml-2">
+              of {findings.length}
+            </span>
+          )}
         </h2>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
           <Select<SeverityFilter>
             aria-label="Filter by severity"
             value={severity}
@@ -70,11 +80,24 @@ export function FindingsList({ findings, isLoading }: { findings: Finding[]; isL
             onChange={setVerified}
             options={VERIFIED_OPTIONS}
           />
+          {hasFilters && (
+            <button
+              type="button"
+              onClick={() => {
+                setSeverity("all");
+                setCategory("all");
+                setVerified("all");
+              }}
+              className="font-caption text-caption text-text-muted hover:text-text-primary transition-colors px-2 py-1"
+            >
+              Clear
+            </button>
+          )}
         </div>
       </div>
 
       {isLoading && (
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-4" role="status" aria-busy="true">
           {Array.from({ length: 3 }).map((_, i) => (
             <Skeleton key={i} className="h-40 rounded" />
           ))}

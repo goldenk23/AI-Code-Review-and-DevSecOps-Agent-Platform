@@ -87,10 +87,17 @@ func ExchangeCodeForToken(ctx context.Context, code string) (string, error) {
 	}
 
 	if err := json.Unmarshal(body, &result); err != nil { // Converts JSON bytes → Go struct. If parsing fails, return error
-		return "", err
+		return "", fmt.Errorf("failed to parse token response: %w (body: %s)", err, string(body))
 	}
 	if result.Error != "" {
 		return "", fmt.Errorf("GitHub error: %s", result.Error)
+	}
+	if result.AccessToken == "" {
+		// GitHub returned a non-2xx (e.g. 403 "bad_verification_code" when the
+		// same code is exchanged twice) but no top-level `error` field. Surface
+		// the raw body so the caller sees WHY the token exchange failed instead
+		// of a silent empty token that later breaks GetUser.
+		return "", fmt.Errorf("GitHub returned no access_token (HTTP %d): %s", resp.StatusCode, string(body))
 	}
 	return result.AccessToken, nil
 }
@@ -119,9 +126,19 @@ func GetUser(ctx context.Context, accessToken string) (*GitHubUser, error) {
 		return nil, err
 	}
 
+	// GitHub returns 401 when the access token is empty/invalid. Without this
+	// check we'd unmarshal an empty body into a zero-value user and silently
+	// upsert a user with github_id=0, which breaks later lookups.
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GitHub /user returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
 	var user GitHubUser
 	if err := json.Unmarshal(body, &user); err != nil { // Converts JSON bytes → Go struct. If parsing fails, return error
-		return nil, err
+		return nil, fmt.Errorf("failed to parse user response: %w (body: %s)", err, string(body))
+	}
+	if user.ID == 0 || user.Login == "" {
+		return nil, fmt.Errorf("GitHub returned an incomplete user profile: %+v", user)
 	}
 	return &user, nil
 }

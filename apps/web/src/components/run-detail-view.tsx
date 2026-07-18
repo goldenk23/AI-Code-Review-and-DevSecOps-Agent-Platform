@@ -11,19 +11,22 @@ import { PostCommentButton } from "@/components/post-comment-button";
 import { Card, CardWithHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { EmptyState } from "@/components/ui/empty-state";
-import { ChevronRightIcon, CommitIcon } from "@/components/icons";
+import { Button } from "@/components/ui/button";
+import { ChevronRightIcon, CommitIcon, RefreshIcon } from "@/components/icons";
 import { STATUS_STYLES } from "@/lib/constants";
 import { shortSha, clockTime, duration } from "@/lib/format";
 
 export function RunDetailView({ runId }: { runId: number }) {
   // The full run -- gives us status, started_at, completed_at, error.
-  const { data: run, isLoading, error } = useAnalysis(runId);
+  const { data: run, isLoading, error, refetch } = useAnalysis(runId);
   // isActive drives polling on the two dependent queries below.
   const isActive = !!run && (run.status === "running" || run.status === "queued");
 
-  const { data: jobs } = useAnalysisJobs(runId, !!run && !error);
-  const { data: findings } = useAnalysisFindings(runId, isActive, !!run && !error);
+  // Jobs + findings only fetch once we have a run (so we know it exists).
+  // Findings poll only while the run is active; jobs poll while any job runs.
+  const jobsEnabled = !!run && !error;
+  const { data: jobs } = useAnalysisJobs(runId, jobsEnabled);
+  const { data: findings, isLoading: findingsLoading } = useAnalysisFindings(runId, isActive, jobsEnabled);
 
   const jobList = useMemo(() => jobs ?? [], [jobs]);
 
@@ -47,10 +50,16 @@ export function RunDetailView({ runId }: { runId: number }) {
     return (
       <AppShell>
         <main className="max-w-container-max mx-auto px-margin-page py-8">
-          <EmptyState
-            title="Run not found"
-            description={error?.message ?? "This run doesn't exist or hasn't been recorded yet."}
-          />
+          <div className="flex flex-col items-center justify-center text-center gap-3 border border-critical/30 bg-critical/5 rounded-lg p-6 max-w-md mx-auto">
+            <p className="font-subheading text-subheading text-critical">Run not found</p>
+            <p className="font-code-sm text-code-sm text-text-muted">
+              {error?.message ?? "This run doesn't exist or hasn't been recorded yet."}
+            </p>
+            <Button variant="ghost" onClick={() => refetch()}>
+              <RefreshIcon className="size-4" />
+              Retry
+            </Button>
+          </div>
         </main>
       </AppShell>
     );
@@ -64,7 +73,8 @@ export function RunDetailView({ runId }: { runId: number }) {
       <div className="max-w-container-max mx-auto px-margin-page py-8 w-full flex flex-col md:flex-row gap-gutter">
         {/* LEFT 70%: findings */}
         <main className="w-full md:w-[70%] flex flex-col gap-6">
-          {/* Breadcrumb + header */}
+          {/* Breadcrumb + header -- PR-title style: status badge inline with
+              the run title, full commit SHA on its own mono line below. */}
           <header className="flex flex-col gap-2">
             <div className="flex items-center gap-2 text-text-muted font-body-muted text-body-muted">
               <Link href="/" className="hover:text-text-primary transition-colors">Runs</Link>
@@ -81,6 +91,7 @@ export function RunDetailView({ runId }: { runId: number }) {
                 bgCls={style.bg}
                 borderCls={style.border}
                 dot={style.dot}
+                dotShape={style.dotShape}
                 pulse={run.status === "running"}
               />
             </div>
@@ -98,33 +109,40 @@ export function RunDetailView({ runId }: { runId: number }) {
             )}
           </header>
 
-          {/* Findings */}
-          <FindingsList findings={findings ?? []} isLoading={isActive && !findings} />
+          {/* Findings -- show skeleton while the query is loading (covers the
+              initial load on a completed run, not just active runs). */}
+          <FindingsList findings={findings ?? []} isLoading={findingsLoading} />
         </main>
 
-        {/* RIGHT 30%: sticky metadata */}
+        {/* RIGHT 30%: sticky metadata -- Actions, Run Summary, Jobs.
+            Order matches the Stitch run-detail design. */}
         <aside className="w-full md:w-[30%] flex flex-col gap-4 md:sticky md:top-24 self-start">
           {/* Actions */}
           <Card className="p-4">
             <PostCommentButton runId={run.id} runStatus={run.status} />
           </Card>
 
-          {/* Run summary */}
+          {/* Run summary -- the detail API exposes started_at/completed_at but
+              NOT created_at, so we show Started (not "Created") to avoid
+              duplicating the same value on two rows. */}
           <CardWithHeader title="Run Summary">
             <div className="p-4 flex flex-col gap-3">
               <SummaryRow label="Commit" value={shortSha(run.commit_sha)} mono />
-              <SummaryRow label="Trigger" value={run.trigger} />
+              <SummaryRow label="Trigger" value={run.trigger} mono />
               <SummaryRow
                 label="Started"
                 value={run.started_at ? clockTime(run.started_at) : "—"}
+                mono
               />
               <SummaryRow
                 label="Completed"
                 value={run.completed_at ? clockTime(run.completed_at) : isActive ? "in progress..." : "—"}
+                mono
               />
               <SummaryRow
                 label="Duration"
                 value={dur || (isActive ? "in progress..." : "—")}
+                mono
               />
             </div>
           </CardWithHeader>
@@ -132,7 +150,7 @@ export function RunDetailView({ runId }: { runId: number }) {
           {/* Jobs */}
           <CardWithHeader title="Jobs">
             <div className="p-4">
-              <JobProgress jobs={jobList} />
+              <JobProgress jobs={jobList} runStartedAt={run.started_at} />
             </div>
           </CardWithHeader>
         </aside>

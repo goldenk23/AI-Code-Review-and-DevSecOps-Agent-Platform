@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 // "tonal layers, no shadows" rule from DESIGN.md.
 export function Card({ className = "", children }: { className?: string; children: ReactNode }) {
   return (
-    <div className={`bg-surface-container-lowest border border-border-dark rounded-lg ${className}`}>
+    <div className={`bg-[#111111] border border-border-dark rounded-lg shadow-none ${className}`}>
       {children}
     </div>
   );

@@ -13,12 +13,16 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   async rewrites() {
     return [
+      // OAuth code exchange -- called from the Next callback page's useEffect.
+      // Different path from /auth/github/callback so it doesn't conflict with
+      // the Next page. MUST come before the /api/:path* catch-all below --
+      // Next evaluates rewrites top-down and the first matching source wins,
+      // so a more specific rule placed after the catch-all is silently shadowed
+      // (the request gets forwarded to /api/auth/exchange on Go, which 404s).
+      { source: "/api/auth/exchange", destination: "http://localhost:8080/auth/github/callback" },
       { source: "/api/:path*", destination: "http://localhost:8080/api/:path*" },
       // Login kickoff -- Go 302s the browser to GitHub.
       { source: "/auth/github", destination: "http://localhost:8080/auth/github" },
-      // OAuth code exchange -- called from the Next callback page's useEffect.
-      // Different path from /auth/github/callback so it doesn't conflict with the Next page.
-      { source: "/api/auth/exchange", destination: "http://localhost:8080/auth/github/callback" },
     ];
   },
 };

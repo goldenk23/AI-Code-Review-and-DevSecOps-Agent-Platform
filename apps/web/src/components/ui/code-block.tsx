@@ -1,8 +1,10 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 
-// "Show evidence" disclosure used inside a finding card. Hidden by default
-// to keep the dashboard scrollable; expands inline when clicked.
+// Evidence block shown at the bottom of a finding card. Matches the Stitch
+// run-detail design: a bordered footer area with a soft lowest-tier bg,
+// mono text, horizontal scroll. Long evidence (>200 chars) is hidden behind
+// a "Show evidence" disclosure so the findings list stays scannable.
 export function CodeBlock({
   code,
   defaultOpen = false,
@@ -16,9 +18,11 @@ export function CodeBlock({
 
   if (!isLong) {
     return (
-      <pre className="font-code-sm text-code-sm text-text-primary leading-relaxed bg-surface-container-lowest border-t border-border-dim p-4 overflow-x-auto scrollbar-hide">
-        <code>{trimmed}</code>
-      </pre>
+      <div className="bg-surface-container-lowest border-t border-border-dark p-4 rounded-b overflow-x-auto scrollbar-hide">
+        <pre className="font-code-sm text-code-sm text-text-primary leading-relaxed">
+          <code>{trimmed}</code>
+        </pre>
+      </div>
     );
   }
 
@@ -32,9 +36,11 @@ export function CodeBlock({
         {open ? "Hide evidence" : "Show evidence"}
       </button>
       {open && (
-        <pre className="font-code-sm text-code-sm text-text-primary leading-relaxed bg-surface-container-lowest px-4 pb-4 overflow-x-auto scrollbar-hide">
-          <code>{trimmed}</code>
-        </pre>
+        <div className="bg-surface-container-lowest px-4 pb-4 overflow-x-auto scrollbar-hide">
+          <pre className="font-code-sm text-code-sm text-text-primary leading-relaxed">
+            <code>{trimmed}</code>
+          </pre>
+        </div>
       )}
     </div>
   );

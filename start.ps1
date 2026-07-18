@@ -39,17 +39,39 @@ New-Item -ItemType Directory -Path $logs -Force | Out-Null
 # Cluster of background processes we'll need to kill on exit.
 $script:procs = @()
 
-function Stop-Tree($pid) {
+function Stop-Tree($processId) {
     # Kill a process AND all its descendants. Windows doesn't do this for us
     # automatically when you Stop-Process a parent, so we walk the tree.
-    $children = Get-CimInstance Win32_Process | Where-Object { $_.ParentProcessId -eq $pid }
+    # NOTE: parameter is named $processId (not $pid) -- $pid is a built-in
+    # PowerShell automatic variable and shadowing it trips PSScriptAnalyzer
+    # and editors that flag reserved-variable usage.
+    $children = Get-CimInstance Win32_Process | Where-Object { $_.ParentProcessId -eq $processId }
     foreach ($c in $children) { Stop-Tree $c.ProcessId }
-    try { Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue } catch { }
+    try { Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue } catch { }
 }
 
 function Stop-AllChildren {
     foreach ($p in $script:procs) {
         if ($p -and -not $p.HasExited) { Stop-Tree $p.Id }
+    }
+    # Kill orphaned Next.js dev servers that escaped the process tree above.
+    # Why: `npm run dev` spawns `next dev` which spawns a detached `node
+    # start-server.js` -- Windows reparents the grandchildren, so Stop-Tree
+    # on the cmd.exe /c npm wrapper does NOT reach the actual listening
+    # process. On the next run that orphan still holds :3000, so the new
+    # `next dev` silently binds to :3001 and the browser loads the STALE
+    # server (no current CSS/code). Match by command line to be safe: never
+    # kill unrelated node.exe the user may have running for other work.
+    Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+        Where-Object { $_.CommandLine -like "*next*dev*" -or $_.CommandLine -like "*next\dist\server\lib\start-server*" } |
+        ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch { } }
+    # Belt + braces: free the ports we're about to bind, regardless of process
+    # name. If ANYTHING is listening on 3000/8080/8000, kill its owner.
+    foreach ($port in 3000, 8080, 8000) {
+        $owner = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+        foreach ($conn in $owner) {
+            try { Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue } catch { }
+        }
     }
     # Best-effort: stop the docker compose stack too (data volumes keep data).
     docker compose down --remove-orphans 2>$null | Out-Null
@@ -59,7 +81,36 @@ trap { Stop-AllChildren; break }
 Register-EngineEvent PowerShell.Exiting -Action { Stop-AllChildren } | Out-Null
 
 function Write-Step($msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
-function Write-OK    $msg { Write-Host "    [ok] $msg" -ForegroundColor Green }
+function Write-OK ($msg) { Write-Host "    [ok] $msg" -ForegroundColor Green }
+
+# -----------------------------------------------------------------------------
+# Step 1: bring up Postgres + Redis
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Step 0: clear orphaned dev servers / port squatters BEFORE launching anything.
+# Why this is required: `npm run dev` (Windows) spawns `next dev`, which spawns
+# a DETACHED `node start-server.js`. When the user presses Ctrl+C, our Stop-Tree
+# walks child PIDs but the detached node has already been reparented to the
+# system and survives -- it keeps holding :3000. The next run's `next dev`
+# finds :3000 busy and silently binds to :3001, so the user loads the STALE
+# server (yesterday's CSS/code) and thinks "nothing changed." Killing by
+# command-line match is safe (won't touch unrelated node work) and cheaper than
+# blindly killing anything on :3000 (which we also do as a fallback).
+# -----------------------------------------------------------------------------
+Write-Step "Clearing orphaned dev servers + freeing ports 3000/8080/8000"
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+    Where-Object { $_.CommandLine -like "*next*dev*" -or $_.CommandLine -like "*next\dist\server\lib\start-server*" } |
+    ForEach-Object {
+        Write-Host "    killing orphaned node (PID $($_.ProcessId))"
+        try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch { }
+    }
+foreach ($port in 3000, 8080, 8000) {
+    $owner = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+    foreach ($conn in $owner) {
+        try { Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue } catch { }
+    }
+}
+Write-OK "Ports free"
 
 # -----------------------------------------------------------------------------
 # Step 1: bring up Postgres + Redis
@@ -157,13 +208,16 @@ Get-ChildItem $logs -Filter "*.log" | Remove-Item -Force -ErrorAction SilentlyCo
 
 function Launch($name, $workdir, $cmd) {
     $out = Join-Path $logs "$name.log"
-    # Start-Process returns a process handle we can later kill.
-    # Use $PSHOME\powershell.exe so this works on Windows PowerShell 5.1
-    # AND PowerShell 7+ (where $PSHOME points at pwsh.exe).
-    $shellExe = Join-Path $PSHOME "powershell.exe"
-    if (-not (Test-Path $shellExe)) { $shellExe = Join-Path $PSHOME "pwsh.exe" }
-    $p = Start-Process -FilePath $shellExe `
-        -ArgumentList "-NoProfile","-Command",$cmd `
+    # Launch each service via `cmd.exe /c "<cmd>"`. cmd /c blocks until the
+    # child (npm/go/python) exits, so the process handle we keep is the actual
+    # long-running service process -- the supervisor loop's HasExited check
+    # then correctly reflects whether the service is still alive. (Using a
+    # powershell.exe -NoExit wrapper left the wrapper alive even after the
+    # child died, which masked real crashes; using powershell.exe without
+    # -NoExit made the wrapper exit immediately after spawning the child,
+    # which made the supervisor tear everything down on startup.)
+    $p = Start-Process -FilePath "cmd.exe" `
+        -ArgumentList "/c", $cmd `
         -WorkingDirectory $workdir `
         -RedirectStandardOutput $out `
         -RedirectStandardError (Join-Path $logs "$name.err.log") `
@@ -174,9 +228,11 @@ function Launch($name, $workdir, $cmd) {
 }
 
 Write-Step "Launching services"
+# Commands run under `cmd.exe /c`, so use cmd syntax (no PowerShell `&` call
+# operator). Quote paths that may contain spaces.
 Launch "api"        "$root\apps\api"        "go run main.go"
-Launch "ai-service" "$root\apps\ai-service" "& '$root\apps\ai-service\.venv\Scripts\python.exe' -m uvicorn main:app --port 8000"
-Launch "worker"     "$root\apps\worker"     "& '$root\apps\worker\.venv\Scripts\python.exe' worker.py"
+Launch "ai-service" "$root\apps\ai-service" """$root\apps\ai-service\.venv\Scripts\python.exe"" -m uvicorn main:app --port 8000"
+Launch "worker"     "$root\apps\worker"     """$root\apps\worker\.venv\Scripts\python.exe"" worker.py"
 Launch "web"         "$root\apps\web"        "npm run dev"
 
 # -----------------------------------------------------------------------------
@@ -226,13 +282,18 @@ try {
             }
             if ($job.State -eq "Completed" -or $job.State -eq "Failed") { $done = $true }
         }
-        # If any service process died, exit the loop so the trap cleans up.
+        # Only shut down when ALL service wrappers have exited. A single
+        # wrapper exiting early is normal on Windows (npm/go spawn detached
+        # children and the wrapper returns); tearing everything down on the
+        # first exit would kill the still-healthy services. Ctrl+C still works
+        # via the trap above.
+        $allDead = $true
         foreach ($p in $script:procs) {
-            if ($p.HasExited) {
-                Write-Host "`n[$($p.ProcessName) exited -- shutting down]" -ForegroundColor Red
-                $done = $true
-                break
-            }
+            if ($p -and -not $p.HasExited) { $allDead = $false; break }
+        }
+        if ($allDead -and $script:procs.Count -gt 0) {
+            Write-Host "`n[all services exited -- shutting down]" -ForegroundColor Red
+            $done = $true
         }
         if ($done) { break }
         Start-Sleep -Milliseconds 250

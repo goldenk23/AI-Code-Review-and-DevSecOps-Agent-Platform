@@ -1,14 +1,15 @@
 "use client";
 import { useQuery } from "@tanstack/react-query";
 import type { AnalysisJob } from "@/lib/types";
-import { get } from "@/lib/api";
+import { getList } from "@/lib/api";
 
 // Jobs (test / semgrep / npm_audit) for one run. Polls while the parent run
 // is still in-flight, stops once it's completed or failed.
+// getList normalises the API's `null`-instead-of-`[]` quirk.
 export function useAnalysisJobs(runId: number, enabled = true) {
   return useQuery<AnalysisJob[]>({
     queryKey: ["analysis", runId, "jobs"],
-    queryFn: () => get<AnalysisJob[]>(`/api/analyses/${runId}/jobs`),
+    queryFn: () => getList<AnalysisJob>(`/api/analyses/${runId}/jobs`),
     enabled,
     refetchInterval: (query) => {
       // We don't have the run status here, so just keep polling at 10s while
