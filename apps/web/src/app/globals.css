@@ -1,26 +1,151 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/*
+  Proton Syntax design system, ported to Tailwind v4.
+
+  In Tailwind v4 we DON'T use tailwind.config.js. Instead, every CSS variable
+  declared inside @theme becomes a real utility class automatically:
+    --color-info       -> bg-info, text-info, border-info, bg-info/10, etc.
+    --spacing-gutter   -> p-gutter, gap-gutter, m-gutter, ...
+    --text-headline-lg -> text-headline-lg (with line-height + weight + tracking)
+    --font-body-base   -> font-body-base
+
+  The whole app is dark-mode-native, so we just set the dark values as the
+  defaults -- no media-query switching, no .dark class gymnastics. Simpler.
+*/
+
+@theme {
+  /* ---------- SURFACES ---------- */
+  --color-background: #0a0a0a;
+  --color-surface: #131313;
+  --color-surface-dim: #131313;
+  --color-surface-bright: #3a3939;
+  --color-surface-container-lowest: #0e0e0e;
+  --color-surface-container-low: #1c1b1b;
+  --color-surface-container: #201f1f;
+  --color-surface-container-high: #2a2a2a;
+  --color-surface-container-highest: #353534;
+
+  /* ---------- TEXT ---------- */
+  --color-on-background: #e5e2e1;
+  --color-on-surface: #e5e2e1;
+  --color-on-surface-variant: #c7c4d7;
+  --color-text-primary: #ededed;
+  --color-text-muted: #a0a0a0;
+
+  /* ---------- BORDORS / OUTLINES ---------- */
+  --color-border-dark: #232323;
+  --color-border-light: #e5e7eb;
+  --color-outline: #908fa0;
+  --color-outline-variant: #464554;
+
+  /* ---------- BRAND (Indigo) ---------- */
+  --color-primary: #c0c1ff;
+  --color-primary-container: #8083ff;
+  --color-on-primary: #1000a9;
+  --color-on-primary-container: #0d0096;
+  --color-inverse-primary: #494bd6;
+
+  /* ---------- SECONDARY (neutral) ---------- */
+  --color-secondary: #c8c6c5;
+  --color-secondary-container: #4a4949;
+  --color-on-secondary: #313030;
+
+  /* ---------- TERTIARY (amber accent) ---------- */
+  --color-tertiary: #ffb783;
+  --color-tertiary-container: #d97721;
+
+  /* ---------- ERROR ---------- */
+  --color-error: #ffb4ab;
+  --color-error-container: #93000a;
+  --color-on-error: #690005;
+
+  /* ---------- SEMANTIC: SEVERITY ---------- */
+  --color-critical: #9b1c1c;
+  --color-high: #d92d20;
+  --color-medium: #f79009;
+  --color-low: #667085;
+  --color-info: #1570ef;
+
+  /* ---------- SEMANTIC: STATUS ---------- */
+  --color-success: #12b76a;
+
+  /* ---------- FONTS ----------
+     The actual Geist imports live in layout.tsx (next/font/google). Those
+     files set --font-geist-sans / --font-geist-mono CSS variables on <html>.
+     We just point our design tokens at them here. */
+  --font-body-base: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-body-muted: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-subheading: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-headline-md: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-headline-lg: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-caption: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-code-base: var(--font-geist-mono), ui-monospace, monospace;
+  --font-code-sm: var(--font-geist-mono), ui-monospace, monospace;
+
+  /* ---------- FONT SIZES / LINE-HEIGHTS / WEIGHTS / TRACKING ----------
+     v4 syntax: --text-<name> = size, plus optional --text-<name>--* companions. */
+  --text-headline-lg: 32px;
+  --text-headline-lg--line-height: 40px;
+  --text-headline-lg--letter-spacing: -0.02em;
+  --text-headline-lg--font-weight: 700;
+
+  --text-headline-md: 24px;
+  --text-headline-md--line-height: 32px;
+  --text-headline-md--letter-spacing: -0.01em;
+  --text-headline-md--font-weight: 600;
+
+  --text-subheading: 16px;
+  --text-subheading--line-height: 24px;
+  --text-subheading--font-weight: 600;
+
+  --text-body-base: 14px;
+  --text-body-base--line-height: 20px;
+  --text-body-base--font-weight: 400;
+
+  --text-body-muted: 14px;
+  --text-body-muted--line-height: 20px;
+  --text-body-muted--font-weight: 400;
+
+  --text-caption: 12px;
+  --text-caption--line-height: 16px;
+  --text-caption--font-weight: 400;
+
+  --text-code-base: 13px;
+  --text-code-base--line-height: 20px;
+  --text-code-base--font-weight: 400;
+
+  --text-code-sm: 11px;
+  --text-code-sm--line-height: 16px;
+  --text-code-sm--font-weight: 400;
+
+  /* ---------- SPACING ----------
+     v4 generates utilities like p-inset-card, gap-stack-normal,
+     gap-gutter, px-margin-page, max-w-container-max. */
+  --spacing-inset-card: 1.25rem;
+  --spacing-stack-dense: 0.5rem;
+  --spacing-stack-normal: 1rem;
+  --spacing-gutter: 1rem;
+  --spacing-margin-page: 2rem;
+
+  /* max-w-container-max works via the --container-* namespace in v4. */
+  --container-container-max: 1200px;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
+/* ---------- BASE ---------- */
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-background);
+  color: var(--color-on-background);
+  font-family: var(--font-body-base);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Tiny utility: hide scrollbars on a scroll area (used by code blocks). */
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Respect users who don't want motion -- disables the "running" pulse. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-ping { animation: none; }
+  .animate-pulse { animation: none; }
 }

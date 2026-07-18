@@ -1,5 +1,0 @@
-GitHub webhook → Go API (port 8080) → saves to PostgreSQL + pushes job to Redis
-                                          ↓
-                              Python worker pulls job from Redis
-                                          ↓
-                              clones repo, runs tests, updates PostgreSQL

@@ -94,6 +94,9 @@ func main() {
 		r.Get("/analyses/{id}", apiHandlers.GetAnalysis)
 		r.Get("/analyses/{id}/jobs", apiHandlers.GetAnalysisJobs)
 		r.Get("/analyses/{id}/findings", apiHandlers.GetAnalysisFindings)
+		// Trigger posting/updating the review-summary comment on the PR.
+		// The worker hits this endpoint once it has saved all findings.
+		r.Post("/analyses/{id}/post-comments", apiHandlers.PostComments)
 	})
 
 	r.Post("/webhooks/github", webhookHandler.HandleGitHubWebhook)
