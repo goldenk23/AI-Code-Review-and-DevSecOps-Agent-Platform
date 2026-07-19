@@ -56,6 +56,8 @@ export const AddIcon = (p: IconProps) => <Icon name="add" {...p} />;
 export const MergeTypeIcon = (p: IconProps) => <Icon name="merge_type" {...p} />;
 export const GridViewIcon = (p: IconProps) => <Icon name="grid_view" {...p} />;
 export const ViewListIcon = (p: IconProps) => <Icon name="view_list" {...p} />;
+export const WebhookIcon = (p: IconProps) => <Icon name="webhook" {...p} />;
+export const StorageIcon = (p: IconProps) => <Icon name="storage" {...p} />;
 export const TrendingUpIcon = (p: IconProps) => <Icon name="trending_up" {...p} />;
 export const TrendingDownIcon = (p: IconProps) => <Icon name="trending_down" {...p} />;
 export const ScheduleIcon = (p: IconProps) => <Icon name="schedule" {...p} />;

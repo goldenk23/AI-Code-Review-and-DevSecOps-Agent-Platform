@@ -17,6 +17,7 @@ and a large language model.
 | [flows.md](flows.md) | Step-by-step walkthroughs of the three main request flows |
 | [development.md](development.md) | How to run the project locally, with commands and gotchas |
 | [ai-service.md](ai-service.md) | How the AI review endpoint works (LLM call, parsing, retries) |
+| [testing-pr-review.md](testing-pr-review.md) | Step-by-step guide to trigger a real PR review end-to-end via GitHub webhook (ngrok + form config + troubleshooting) |
 
 ## What's implemented so far
 

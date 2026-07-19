@@ -8,12 +8,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/goldenk23/ai-devsecops-reviewer/api/internal/queue"
+	"go.uber.org/zap"
 )
 // Handler struct holds dependencies for webhook processing
 type Handler struct {
@@ -213,11 +213,20 @@ func(h *Handler) HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 			Branch:       payload.PullRequest.Head.Ref,
 		})
 		if err != nil {
-			log.Printf("Failed to enqueue job: %v", err)
+			// Structured log: run_id + repo + pr are fields so a log
+			// aggregator can filter/alert on them, not parse a string.
+			zap.L().Error("failed to enqueue analysis job",
+				zap.Int64("run_id", runID),
+				zap.String("repo", payload.Repository.FullName),
+				zap.Int("pr_number", payload.PullRequest.Number),
+				zap.Error(err))
 		}
 	}
-	fmt.Printf("Created analysis run #%d for %s PR #%d\n",
-		runID, payload.Repository.FullName, payload.PullRequest.Number)
+	zap.L().Info("created analysis run",
+		zap.Int64("run_id", runID),
+		zap.String("repo", payload.Repository.FullName),
+		zap.Int("pr_number", payload.PullRequest.Number),
+		zap.String("commit_sha", payload.PullRequest.Head.SHA))
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]interface{}{

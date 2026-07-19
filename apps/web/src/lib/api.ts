@@ -36,3 +36,19 @@ export async function post(path: string): Promise<void> {
     throw new Error(text || `HTTP ${res.status} on ${path}`);
   }
 }
+
+// `put` sends a JSON body and returns the server's response JSON. Used by
+// the Automation page's settings save (partial update where the server
+// echoes back the full updated row so the caller can cache-put it).
+export async function put<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `HTTP ${res.status} on ${path}`);
+  }
+  return res.json() as Promise<T>;
+}

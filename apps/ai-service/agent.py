@@ -30,7 +30,7 @@ import httpx
 DEFAULT_BASE_URL = "https://opencode.ai/zen/go/v1"
 DEFAULT_MODEL = "glm-5.2"      # one of the models your Go subscription includes
 DEFAULT_TIMEOUT = 60           # give up on the HTTP request if it takes longer than 60s
-DEFAULT_MAX_TOKENS = 2000      # cap how long the LLM's answer can be (tokens ~ words/pieces)
+DEFAULT_MAX_TOKENS = 4000      # cap how long the LLM's answer can be (tokens ~ words/pieces) — increased to fit suggested_patch diffs
 DEFAULT_TEMPERATURE = 0.1      # 0.0 = deterministic, 1.0 = creative. Low = consistent reviews.
 MAX_RETRIES = 2                # if the call fails, retry up to 2 more times (3 attempts total)
 
@@ -60,12 +60,20 @@ and identify issues. For each issue, provide:
 - description: A detailed explanation
 - evidence: A quote from the diff or tool output that proves this issue exists
 - confidence: A number from 0.0 to 1.0 indicating how sure you are
+- suggested_patch: A unified diff patch that fixes this issue (see format below)
+
+SUGGESTED PATCH FORMAT:
+- Provide a unified diff (the format `git diff` produces) that can be applied with `git apply`.
+- Use the format: --- a/path/to/file\n+++ b/path/to/file\n@@ -start,count +start,count @@\n context lines\n-removed lines\n+added lines
+- Only include a suggested_patch when you are confident the fix is correct.
+- If you cannot suggest a fix, set suggested_patch to null.
 
 IMPORTANT RULES:
 1. Every finding MUST include evidence.
 2. If you can't find evidence, don't report the finding.
 3. Focus on real issues, not style preferences.
 4. Consider the test results and security scan results.
+5. The suggested_patch must be a valid unified diff that applies cleanly with `git apply`.
 
 Return your findings as a JSON array. If there are no issues, return an empty array [].
 Respond with ONLY the JSON array, no prose, no markdown fences.

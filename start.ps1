@@ -67,7 +67,8 @@ function Stop-AllChildren {
         ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch { } }
     # Belt + braces: free the ports we're about to bind, regardless of process
     # name. If ANYTHING is listening on 3000/8080/8000, kill its owner.
-    foreach ($port in 3000, 8080, 8000) {
+    foreach ($port in 3000, 8080, 8000) {C:\Users\golde\Desktop\Projects\AI-Code-Review-and-DevSecOps-Agent-Platform\apps\ai-service\.env
+    i just want to 
         $owner = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
         foreach ($conn in $owner) {
             try { Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue } catch { }

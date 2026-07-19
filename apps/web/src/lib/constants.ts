@@ -26,11 +26,23 @@ export const VERIFICATION_STYLES: Record<VerificationStatus, { text: string; bg:
     bg: "bg-success/10",
     border: "border-success/30",
   },
+  verified_by_test: {
+    label: "Verified by test",
+    text: "text-success",
+    bg: "bg-success/10",
+    border: "border-success/30",
+  },
   unverified: {
     label: "AI -- unverified",
     text: "text-medium",
     bg: "bg-medium/10",
     border: "border-medium/30",
+  },
+  failed_verification: {
+    label: "Patch failed verification",
+    text: "text-critical",
+    bg: "bg-critical/10",
+    border: "border-critical/30",
   },
 };
 

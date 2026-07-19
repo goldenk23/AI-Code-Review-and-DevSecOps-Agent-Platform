@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Automation Settings - CodePulse AI</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Geist+Sans:wght@100..900&display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "inverse-primary": "#494bd6",
+                        "surface-variant": "#353534",
+                        "on-primary-container": "#0d0096",
+                        "secondary-fixed-dim": "#c8c6c5",
+                        "text-muted": "#a0a0a0",
+                        "outline": "#908fa0",
+                        "primary-fixed": "#e1e0ff",
+                        "on-secondary": "#313030",
+                        "surface-bright": "#3a3939",
+                        "border-light": "#e5e7eb",
+                        "on-surface": "#e5e2e1",
+                        "error-container": "#93000a",
+                        "info": "#1570ef",
+                        "inverse-surface": "#e5e2e1",
+                        "border-dark": "#232323",
+                        "surface-container-high": "#2a2a2a",
+                        "inverse-on-surface": "#313030",
+                        "high": "#d92d20",
+                        "on-error-container": "#ffdad6",
+                        "tertiary-fixed": "#ffdcc5",
+                        "primary": "#c0c1ff",
+                        "tertiary-fixed-dim": "#ffb783",
+                        "text-primary": "#ededed",
+                        "secondary-fixed": "#e5e2e1",
+                        "on-secondary-container": "#bab8b7",
+                        "on-tertiary-container": "#452000",
+                        "on-primary": "#1000a9",
+                        "background": "#131313",
+                        "on-secondary-fixed-variant": "#474646",
+                        "on-primary-fixed": "#07006c",
+                        "on-background": "#e5e2e1",
+                        "secondary-container": "#4a4949",
+                        "on-tertiary-fixed": "#301400",
+                        "on-primary-fixed-variant": "#2f2ebe",
+                        "on-secondary-fixed": "#1c1b1b",
+                        "surface-dim": "#131313",
+                        "primary-fixed-dim": "#c0c1ff",
+                        "primary-container": "#8083ff",
+                        "surface-container-low": "#1c1b1b",
+                        "surface-container": "#201f1f",
+                        "success": "#12b76a",
+                        "secondary": "#c8c6c5",
+                        "on-tertiary-fixed-variant": "#703700",
+                        "tertiary": "#ffb783",
+                        "on-tertiary": "#4f2500",
+                        "critical": "#9b1c1c",
+                        "low": "#667085",
+                        "error": "#ffb4ab",
+                        "surface-tint": "#c0c1ff",
+                        "surface": "#131313",
+                        "medium": "#f79009",
+                        "surface-container-lowest": "#0e0e0e",
+                        "tertiary-container": "#d97721",
+                        "on-error": "#690005",
+                        "surface-container-highest": "#353534",
+                        "outline-variant": "#464554",
+                        "on-surface-variant": "#c7c4d7"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "inset-card": "1.25rem",
+                        "margin-page": "2rem",
+                        "gutter": "1rem",
+                        "stack-normal": "1rem",
+                        "container-max": "1200px",
+                        "stack-dense": "0.5rem"
+                    },
+                    "fontFamily": {
+                        "headline-lg": ["Geist Sans"],
+                        "subheading": ["Geist Sans"],
+                        "code-base": ["Geist Mono"],
+                        "headline-md": ["Geist Sans"],
+                        "code-sm": ["Geist Mono"],
+                        "body-muted": ["Geist Sans"],
+                        "body-base": ["Geist Sans"],
+                        "caption": ["Geist Sans"]
+                    },
+                    "fontSize": {
+                        "headline-lg": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                        "subheading": ["16px", { "lineHeight": "24px", "fontWeight": "600" }],
+                        "code-base": ["13px", { "lineHeight": "20px", "fontWeight": "400" }],
+                        "headline-md": ["24px", { "lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600" }],
+                        "code-sm": ["11px", { "lineHeight": "16px", "fontWeight": "400" }],
+                        "body-muted": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
+                        "body-base": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
+                        "caption": ["12px", { "lineHeight": "16px", "fontWeight": "400" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        body { font-family: 'Geist Sans', sans-serif; }
+        .toggle-checkbox:checked { right: 0; border-color: #8083ff; }
+        .toggle-checkbox:checked + .toggle-label { background-color: #8083ff; }
+        .toggle-checkbox:checked + .toggle-label:after { transform: translateX(100%); border-color: white; }
+        
+        .slider-thumb::-webkit-slider-thumb {
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #8083ff;
+            cursor: pointer;
+            border: 2px solid #131313;
+        }
+    </style>
+</head>
+<body class="bg-background text-text-primary min-h-screen flex flex-col">
+<!-- TopNavBar -->
+<header class="w-full top-0 sticky border-b border-border-dark bg-background dark:bg-background z-50">
+<div class="flex items-center justify-between px-margin-page h-16 w-full max-w-container-max mx-auto">
+<div class="flex items-center gap-8">
+<span class="font-headline-md text-headline-md font-bold text-primary dark:text-primary tracking-tight">CodePulse AI</span>
+<!-- Desktop Nav -->
+<nav class="hidden md:flex items-center gap-6 font-body-base text-body-base">
+<a class="text-text-muted hover:text-text-primary transition-colors hover:bg-surface-container-low active:scale-95 duration-100 px-2 py-1 rounded" href="#">Dashboard</a>
+<a class="text-text-muted hover:text-text-primary transition-colors hover:bg-surface-container-low active:scale-95 duration-100 px-2 py-1 rounded" href="#">Repositories</a>
+<a class="text-text-muted hover:text-text-primary transition-colors hover:bg-surface-container-low active:scale-95 duration-100 px-2 py-1 rounded" href="#">Security</a>
+<a class="text-primary border-b-2 border-primary pb-2" href="#">Automation</a>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<button class="text-text-muted hover:text-text-primary transition-colors hover:bg-surface-container-low active:scale-95 duration-100 p-2 rounded-full">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">notifications</span>
+</button>
+<button class="text-text-muted hover:text-text-primary transition-colors hover:bg-surface-container-low active:scale-95 duration-100 p-2 rounded-full">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">settings</span>
+</button>
+<img alt="Developer Profile" class="w-8 h-8 rounded-full border border-border-dark object-cover" data-alt="A small, stylized avatar profile picture of a software developer. Close up. Cinematic lighting. Digital illustration style with a futuristic cyberpunk edge. Deep blacks and vibrant blues." src="https://lh3.googleusercontent.com/aida-public/AB6AXuABKn7eLnXGG4BDpoPSzDMs9cIqFh3IMmnrmwPXaudhb-DlntrasObpDYXvlWLuw0jyQMdM2izpt6O0Z91UQ4UCcYXhsjXzOpxumLo-ecjRfDVsaIpTpG64v1PasxdrK0_3mM9xnAo5ZDTVmuE_0ffJoZdHczJ7pjoS1K5lgCJjXzt38dBKVB59IiPWUvY5rNmmrIwb1oQvp6r15cxlw_iQ1hNSM8AdOzERzM-W-uXVIuPgZ5Bh323Sy6Lj4zChmazQPKCfOLhleVZ5"/>
+</div>
+</div>
+</header>
+<div class="flex-1 flex max-w-container-max mx-auto w-full">
+<!-- Main Content Canvas -->
+<main class="flex-1 p-margin-page pt-8 md:pt-12">
+<div class="mb-8">
+<h1 class="font-headline-lg text-headline-lg mb-2">Automation Settings</h1>
+<p class="font-body-muted text-body-muted text-text-muted">Configure AI agent behavior, scanning triggers, and review style for automated PR analysis.</p>
+</div>
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+<!-- 70% Column (Settings) -->
+<div class="lg:col-span-8 space-y-8">
+<!-- Scan Triggers Bento Card -->
+<section class="bg-[#111111] border border-border-dark rounded-lg p-inset-card">
+<div class="flex items-center gap-3 border-b border-border-dark pb-4 mb-6">
+<span class="material-symbols-outlined text-primary">bolt</span>
+<h2 class="font-subheading text-subheading">Scan Triggers</h2>
+</div>
+<div class="space-y-6">
+<div class="flex items-center justify-between">
+<div>
+<h3 class="font-body-base text-body-base font-semibold">PR Webhooks</h3>
+<p class="font-body-muted text-body-muted text-text-muted mt-1">Automatically scan new pull requests and commits.</p>
+</div>
+<div class="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in">
+<input checked="" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer" id="toggle1" name="toggle1" type="checkbox"/>
+<label class="toggle-label block overflow-hidden h-6 rounded-full bg-primary-container cursor-pointer" for="toggle1"></label>
+</div>
+</div>
+<div class="flex items-center justify-between pt-6 border-t border-[#232323]/50">
+<div>
+<h3 class="font-body-base text-body-base font-semibold">Scheduled Scans</h3>
+<p class="font-body-muted text-body-muted text-text-muted mt-1">Run full repository analysis daily at 00:00 UTC.</p>
+</div>
+<div class="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in">
+<input class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer" id="toggle2" name="toggle2" type="checkbox"/>
+<label class="toggle-label block overflow-hidden h-6 rounded-full bg-surface-container-high cursor-pointer" for="toggle2"></label>
+</div>
+</div>
+</div>
+</section>
+<!-- Threshold Gates Bento Card -->
+<section class="bg-[#111111] border border-border-dark rounded-lg p-inset-card">
+<div class="flex items-center gap-3 border-b border-border-dark pb-4 mb-6">
+<span class="material-symbols-outlined text-primary">gavel</span>
+<h2 class="font-subheading text-subheading">Threshold Gates</h2>
+</div>
+<div class="space-y-6">
+<label class="flex items-start gap-3 cursor-pointer group">
+<input checked="" class="form-checkbox mt-1 h-4 w-4 text-primary bg-[#0a0a0a] border-border-dark rounded focus:ring-1 focus:ring-primary focus:ring-offset-0 focus:ring-offset-background" type="checkbox"/>
+<div>
+<span class="font-body-base text-body-base block group-hover:text-primary transition-colors">Block PR if High findings are found</span>
+<span class="font-body-muted text-body-muted text-text-muted mt-1 block">Fails the CI/CD pipeline if high severity issues are detected.</span>
+</div>
+</label>
+<label class="flex items-start gap-3 cursor-pointer group pt-4">
+<input checked="" class="form-checkbox mt-1 h-4 w-4 text-primary bg-[#0a0a0a] border-border-dark rounded focus:ring-1 focus:ring-primary focus:ring-offset-0 focus:ring-offset-background" type="checkbox"/>
+<div>
+<span class="font-body-base text-body-base block group-hover:text-primary transition-colors">Require verification for Critical findings</span>
+<span class="font-body-muted text-body-muted text-text-muted mt-1 block">Mandates human approval for any finding classified as Critical before merging.</span>
+</div>
+</label>
+</div>
+</section>
+<!-- AI Review Personality -->
+<section class="bg-[#111111] border border-border-dark rounded-lg p-inset-card">
+<div class="flex items-center gap-3 border-b border-border-dark pb-4 mb-6">
+<span class="material-symbols-outlined text-primary">psychology</span>
+<h2 class="font-subheading text-subheading">AI Review Personality</h2>
+</div>
+<div class="space-y-8">
+<div>
+<div class="flex justify-between mb-2">
+<label class="font-body-base text-body-base font-semibold">Verbosity</label>
+<span class="font-code-sm text-code-sm text-text-muted">Balanced</span>
+</div>
+<input class="w-full h-1 bg-surface-container-high rounded-lg appearance-none cursor-pointer slider-thumb" max="3" min="1" type="range" value="2"/>
+<div class="flex justify-between mt-2 font-caption text-caption text-text-muted">
+<span>Concise</span>
+<span>Detailed</span>
+</div>
+</div>
+<div class="pt-4 border-t border-[#232323]/50">
+<div class="flex justify-between mb-2">
+<label class="font-body-base text-body-base font-semibold">Strictness</label>
+<span class="font-code-sm text-code-sm text-text-muted">Strict (Style + Sec)</span>
+</div>
+<input class="w-full h-1 bg-surface-container-high rounded-lg appearance-none cursor-pointer slider-thumb" max="4" min="1" type="range" value="3"/>
+<div class="flex justify-between mt-2 font-caption text-caption text-text-muted">
+<span>Permissive</span>
+<span>Pedantic</span>
+</div>
+</div>
+</div>
+</section>
+<!-- Save Action -->
+<div class="flex justify-end pt-4">
+<button class="bg-inverse-primary hover:bg-inverse-primary/90 text-white font-body-base text-body-base py-2 px-6 rounded-lg transition-all active:scale-95 border border-transparent">
+                            Save Configuration
+                        </button>
+</div>
+</div>
+<!-- 30% Column (Sidebar) -->
+<div class="lg:col-span-4 space-y-6">
+<!-- GitHub Integration Status -->
+<div class="bg-[#111111] border border-border-dark rounded-lg p-inset-card sticky top-24">
+<div class="flex items-center gap-3 border-b border-border-dark pb-4 mb-4">
+<span class="material-symbols-outlined text-text-muted">integration_instructions</span>
+<h3 class="font-subheading text-subheading">Integration Status</h3>
+</div>
+<div class="flex items-start gap-4">
+<div class="w-10 h-10 rounded-full bg-surface-container-high flex items-center justify-center border border-border-dark shrink-0">
+<span class="material-symbols-outlined text-primary">code</span>
+</div>
+<div>
+<h4 class="font-body-base text-body-base font-semibold">GitHub App</h4>
+<div class="flex items-center gap-2 mt-1">
+<span class="w-2 h-2 rounded-full bg-success"></span>
+<span class="font-code-sm text-code-sm text-text-muted">Connected & Active</span>
+</div>
+</div>
+</div>
+<div class="mt-6 pt-4 border-t border-border-dark">
+<div class="font-code-sm text-code-sm text-text-muted space-y-2">
+<div class="flex justify-between">
+<span>Last Sync:</span>
+<span>2m ago</span>
+</div>
+<div class="flex justify-between">
+<span>Permissions:</span>
+<span class="text-primary hover:underline cursor-pointer">Read & Write</span>
+</div>
+</div>
+</div>
+<button class="w-full mt-6 bg-surface-container-high hover:bg-surface-container-highest text-text-primary font-body-base text-body-base py-2 px-4 rounded border border-border-dark transition-colors">
+                            Manage Connection
+                        </button>
+</div>
+</div>
+</div>
+</main>
+</div>
+</body></html>

@@ -5,12 +5,16 @@ import { getList } from "@/lib/api";
 
 // Live list of recent runs. The Go endpoint returns the last 50, newest first.
 // Poll every 5s so a developer watching the dashboard sees new runs land.
-// The query is keyed only by ["analyses"] so refetch invalidates the list everywhere.
 // getList normalises the API's `null`-instead-of-`[]` quirk.
-export function useAnalyses() {
+//
+// Optional `repoId` filter -- when set, hits /api/analyses?repo_id=N and
+// the query key includes the id so a filtered view and the unfiltered
+// view don't share a cache (switching filters wouldn't otherwise refetch).
+export function useAnalyses(repoId?: number) {
+  const qs = repoId ? `?repo_id=${repoId}` : "";
   return useQuery<AnalysisSummary[]>({
-    queryKey: ["analyses"],
-    queryFn: () => getList<AnalysisSummary>("/api/analyses"),
+    queryKey: ["analyses", repoId ?? null],
+    queryFn: () => getList<AnalysisSummary>(`/api/analyses${qs}`),
     refetchInterval: 5_000,
   });
 }

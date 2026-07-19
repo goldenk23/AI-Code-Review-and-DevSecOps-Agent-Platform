@@ -8,12 +8,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/goldenk23/ai-devsecops-reviewer/api/internal/github"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -21,12 +21,31 @@ type Handlers struct {
 	DB *pgxpool.Pool
 }
 
-// ListAnalyses returns all analysis runs
+// ListAnalyses returns analysis runs, newest first.
+//
+// Optional `?repo_id=N` filter narrows the list to one repository -- this
+// is what the /repositories page's "click a repo" flow uses: it redirects
+// to /?repo_id=N and the dashboard calls this endpoint with that filter.
+//
+// We JOIN repositories so we can also return repo_full_name -- the
+// dashboard shows the repo name on each row when listing across repos.
 func (h *Handlers) ListAnalyses(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.DB.Query(r.Context(), `
-		SELECT id, status, trigger, commit_sha, created_at::text
-		FROM analysis_runs ORDER BY created_at DESC LIMIT 50
-	`)
+	sql := `
+		SELECT ar.id, ar.status, ar.trigger, ar.commit_sha, ar.created_at::text,
+		       r.full_name AS repo_full_name
+		FROM analysis_runs ar
+		JOIN repositories r ON r.id = ar.repo_id
+	`
+	args := []interface{}{}
+	if rid := r.URL.Query().Get("repo_id"); rid != "" {
+		if id, err := strconv.ParseInt(rid, 10, 64); err == nil {
+			sql += "WHERE ar.repo_id = $1 "
+			args = append(args, id)
+		}
+	}
+	sql += "ORDER BY ar.created_at DESC LIMIT 50"
+
+	rows, err := h.DB.Query(r.Context(), sql, args...)
 	if err != nil {
 		http.Error(w, "failed to query runs", http.StatusInternalServerError)
 		return
@@ -36,28 +55,15 @@ func (h *Handlers) ListAnalyses(w http.ResponseWriter, r *http.Request) {
 	var runs []map[string]interface{}
 	for rows.Next() {
 		var id int64
-		var status, trigger, commitSHA, createdAt string
-		rows.Scan(&id, &status, &trigger, &commitSHA, &createdAt)
+		var status, trigger, commitSHA, createdAt, repoFullName string
+		rows.Scan(&id, &status, &trigger, &commitSHA, &createdAt, &repoFullName)
 		runs = append(runs, map[string]interface{}{
 			"id": id, "status": status, "trigger": trigger,
 			"commit_sha": commitSHA, "created_at": createdAt,
+			"repo_full_name": repoFullName,
 		})
 	}
 
-	/**
-		### 7. `json.NewEncoder(w).Encode(runs)`
-
-	- `json.NewEncoder(w)` = create a JSON encoder that writes to the response (`w`).
-	- `.Encode(runs)` = convert the `runs` list into JSON and write it out.
-	- The result looks like:
-
-	```json
-	[
-	{"id": 1, "status": "completed", "trigger": "webhook", "commit_sha": "abc123", "created_at": "2026-07-16T..."},
-	{"id": 2, "status": "running", ...}
-	]
-	```
-	*/
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(runs)
 }
@@ -148,7 +154,7 @@ func (h *Handlers) GetAnalysisFindings(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := h.DB.Query(r.Context(), `
 		SELECT id, file_path, line_start, line_end, severity, category,
-		       title, description, evidence, confidence, verification_status
+		       title, description, evidence, confidence, verification_status, suggested_patch
 		FROM findings WHERE run_id = $1 ORDER BY 
 		       CASE severity 
 		         WHEN 'critical' THEN 1 WHEN 'high' THEN 2 
@@ -166,15 +172,16 @@ func (h *Handlers) GetAnalysisFindings(w http.ResponseWriter, r *http.Request) {
 		var id int64
 		var filePath, severity, category, title, description, verificationStatus string
 		var lineStart, lineEnd *int
-		var evidence *string
+		var evidence, suggestedPatch *string
 		var confidence *float64
 		rows.Scan(&id, &filePath, &lineStart, &lineEnd, &severity, &category,
-			&title, &description, &evidence, &confidence, &verificationStatus)
+			&title, &description, &evidence, &confidence, &verificationStatus, &suggestedPatch)
 		findings = append(findings, map[string]interface{}{
 			"id": id, "file_path": filePath, "line_start": lineStart,
 			"line_end": lineEnd, "severity": severity, "category": category,
 			"title": title, "description": description, "evidence": evidence,
 			"confidence": confidence, "verification_status": verificationStatus,
+			"suggested_patch": suggestedPatch,
 		})
 	}
 
@@ -243,7 +250,7 @@ func (h *Handlers) PostComments(w http.ResponseWriter, r *http.Request) {
 	// ORDER BY severity makes the most serious findings print first in the
 	// comment, so a human scanning GitHub sees the important stuff up top.
 	rows, err := h.DB.Query(ctx, `
-		SELECT severity, category, file_path, title, confidence
+		SELECT severity, category, file_path, title, description, confidence, COALESCE(suggested_patch, '')
 		FROM findings WHERE run_id = $1 ORDER BY severity
 	`, runID)
 	if err != nil {
@@ -254,51 +261,64 @@ func (h *Handlers) PostComments(w http.ResponseWriter, r *http.Request) {
 	// returns - even on an early error return. Skipping this leaks DB connections.
 	defer rows.Close()
 
-	// STEP 3: Build the Markdown comment from those raw rows.
-	// We pass runID not just for the header line but also to build a unique
-	// hidden "tag" (an HTML comment) that we embed in the body, so we can
-	// later recognize "this is our comment for run #X" and update it in place
-	// instead of spamming a brand-new comment on every re-run. See the helper below.
-	comment := buildCommentBody(rows, runID)
-	// The tag is the same marker the helper wrote into the body. We repeat it
-	// here so FindExistingComment can look for it among the PR's comments.
 	tag := commentTag(runID)
 
-	// STEP 4: Get a GitHub OAuth token so we can call GitHub's API.
-	//
-	// MVP shortcut: grab the token of the first user in the database. A real
-	// product would scope this to whoever triggered the run, or use a GitHub
-	// App installation token. We name the column oauth_token_encrypted but
-	// treat it as a raw token here for the MVP (no decryption yet).
 	var token string
 	err = h.DB.QueryRow(ctx, "SELECT oauth_token_encrypted FROM users LIMIT 1").Scan(&token)
 	if err != nil {
-		// No token means we cannot authenticate with GitHub at all -> HTTP 500.
 		http.Error(w, "no user token available", http.StatusInternalServerError)
 		return
 	}
 
-	// STEP 5: Split "acme/web" into owner="acme" and repo="web".
-	// GitHub's REST API needs owner and repo as SEPARATE path parameters, but
-	// we store them combined as full_name. parseRepoFullName does the split.
 	owner, repo := parseRepoFullName(repoFullName)
 
-	// STEP 6: Send the comment to GitHub.
-	//
-	// github.NewClient() returns our thin wrapper around GitHub's REST API.
-	// We use the "issue comments" endpoint (a PR is a kind of issue on GitHub)
-	// rather than the "review comment" endpoint used by the older PostComment
-	// function, because a summary comment isn't anchored to a specific line.
-	//
-	// Behavior on re-runs: instead of posting a duplicate comment every time,
-	// we first search the PR's comments for one containing our tag. If we find
-	// one, we UPDATE its body in place; only if there's no prior comment do we
-	// create a brand-new one. This keeps the PR's timeline tidy.
 	ghClient := github.NewClient()
 
-	// FindExistingComment returns the id of an existing comment that already
-	// contains our tag, or 0 if there is no such comment. We pass the tag we
-	// built above so it knows what substring to search for.
+	// STEP 7: We'll split findings into two buckets:
+	// - Those WITH a patch -> send as inline GitHub PR review comments.
+	// - Those WITHOUT a patch -> accumulate into a top-level summary comment.
+	var b strings.Builder
+	b.WriteString(commentTag(runID) + "\n\n")
+	b.WriteString(fmt.Sprintf("## AI Code Review & DevSecOps Agent Platform - Run #%d\n\n", runID))
+	count := 0
+
+	for rows.Next() {
+		var severity, category, filePath, title, description, patch string
+		var confidence float64
+		if err := rows.Scan(&severity, &category, &filePath, &title, &description, &confidence, &patch); err != nil {
+			continue
+		}
+		
+		if patch != "" {
+			// Natively post to GitHub Copilot-style inline PR review comment!
+			snippet, startLine, endLine := parsePatchForGitHub(patch)
+			if snippet != "" && endLine > 0 {
+				body := fmt.Sprintf("**%s**\n%s\n\n```suggestion\n%s\n```", title, description, snippet)
+				// Best-effort posting; we don't abort the whole run if one review comment fails.
+				_ = ghClient.PostReviewComment(ctx, owner, repo, prNumber, body, filePath, commitSHA, startLine, endLine, token)
+			}
+		} else {
+			// Accumulate for top-level summary comment
+			count++
+			icon := ""
+			switch severity {
+			case "critical", "high":
+				icon = "🚨"
+			case "medium":
+				icon = "⚠️"
+			default:
+				icon = "ℹ️"
+			}
+			b.WriteString(fmt.Sprintf("- %s **[%s]** %s - `%s` - %s (%.2f)\n",
+				icon, severity, category, filePath, title, confidence))
+		}
+	}
+	
+	comment := b.String()
+	if count == 0 {
+		comment += "🎉 **No unpatched findings!** The AI either fixed everything or found no issues.\n"
+	}
+
 	existingID, err := ghClient.FindExistingComment(ctx, owner, repo, prNumber, tag, token)
 	if err != nil {
 		// Network error (couldn't even reach GitHub). Surface it to the caller.
@@ -308,8 +328,6 @@ func (h *Handlers) PostComments(w http.ResponseWriter, r *http.Request) {
 
 	// Branch on whether we found an existing comment.
 	if existingID > 0 {
-		// Update the existing comment in place with the freshly built body.
-		// Line 27? Whatever — UpdateComment does the PATCH.
 		err = ghClient.UpdateComment(ctx, owner, repo, existingID, comment, token)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("failed to update comment: %v", err), http.StatusInternalServerError)
@@ -336,67 +354,6 @@ func (h *Handlers) PostComments(w http.ResponseWriter, r *http.Request) {
 }
 
 /**
-buildCommentBody walks through a rows cursor (the findings we just queried)
-and produces a single Markdown string ready to be posted to the GitHub PR.
-
-We use strings.Builder because we're concatenating many small pieces into one
-potentially large string. Builder is much cheaper than repeated "+=".
-
-Note: pgx.Rows is the type returned by h.DB.Query. It gives us rows.Next() to
-advance the cursor and rows.Scan(...) to read column values into Go variables.
-The Scan order MUST match the SELECT clause order - out-of-order columns panic.
-*/
-func buildCommentBody(rows pgx.Rows, runID int64) string {
-	// strings.Builder is Go's efficient string accumulator. We append many
-	// small pieces and call .String() once at the end. Cheaper than "+=".
-	var b strings.Builder
-
-	// Hidden tag line: an HTML comment is invisible when GitHub renders the
-	// Markdown, but we can still see it in the raw comment body. The tag is a
-	// unique string per run, so FindExistingComment can later pick OUR comment
-	// out of all the comments on this PR. We put it at the very top so it shows
-	// up even if a future bug truncates the body somewhere below.
-	b.WriteString(commentTag(runID) + "\n\n")
-
-	// Header of the GitHub comment.
-	// We use the project's own name ("AI Code Review & DevSecOps Agent Platform")
-	// rather than a generic "AI Review Summary", so PR readers know which system
-	// produced the comment and can find the dashboard / docs easily.
-	b.WriteString(fmt.Sprintf("## AI Code Review & DevSecOps Agent Platform - Run #%d\n\n", runID))
-
-	// Loop through every finding row returned by the SQL query.
-	// rows.Next() returns true if there's another row, false when done (or on error).
-	count := 0
-	for rows.Next() {
-		var severity, category, filePath, title string
-		var confidence float64
-		// Scan reads the 5 columns of the current row into our variables.
-		// The order matches: SELECT severity, category, file_path, title, confidence
-		if err := rows.Scan(&severity, &category, &filePath, &title, &confidence); err != nil {
-			// On a scan error we stop and ship whatever comment we have so far.
-			break
-		}
-
-		// One Markdown bullet per finding. Example output:
-		//   - **[high]** security - `src/auth.go` - SQL Injection (0.95)
-		b.WriteString(fmt.Sprintf(
-			"- **[%s]** %s - `%s` - %s (%.2f)\n",
-			severity, category, filePath, title, confidence,
-		))
-		count++
-	}
-
-	// If there were no findings at all, say so explicitly. A silent comment
-	// would leave the PR author wondering whether the scan even ran.
-	// The explicit "_No issues found._" line proves the analysis completed cleanly.
-	if count == 0 {
-		b.WriteString("_No issues found._\n")
-	}
-
-	return b.String()
-}
-
-/**
 parseRepoFullName splits a GitHub "full_name" like "acme/web" into its
 owner ("acme") and repo ("web") parts.
 
@@ -417,6 +374,57 @@ func parseRepoFullName(fullName string) (string, string) {
 		return parts[0], parts[1]
 	}
 	return "", ""
+}
+
+func parsePatchForGitHub(patch string) (snippet string, startLine int, endLine int) {
+	lines := strings.Split(patch, "\n")
+	var out []string
+
+	// e.g. @@ -2,7 +2,7 @@
+	hunkRegex := regexp.MustCompile(`^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@`)
+
+	inHunk := false
+	for _, line := range lines {
+		if !inHunk {
+			matches := hunkRegex.FindStringSubmatch(line)
+			if len(matches) > 0 {
+				inHunk = true
+				startLine, _ = strconv.Atoi(matches[1])
+
+				oldCount := 1 // default to 1 if missing
+				if matches[2] != "" {
+					oldCount, _ = strconv.Atoi(matches[2])
+				}
+
+				if oldCount == 0 {
+					endLine = startLine
+				} else {
+					endLine = startLine + oldCount - 1
+				}
+			}
+			continue
+		}
+
+		if line == "" {
+			out = append(out, "")
+			continue
+		}
+
+		if strings.HasPrefix(line, "+") {
+			out = append(out, strings.TrimPrefix(line, "+"))
+		} else if strings.HasPrefix(line, " ") {
+			out = append(out, strings.TrimPrefix(line, " "))
+		} else if strings.HasPrefix(line, "-") {
+			// skip
+		} else if strings.HasPrefix(line, "\\") {
+			// skip "\ No newline at end of file"
+		} else if strings.HasPrefix(line, "@@") {
+			// multi-hunk patch? We only support single hunk for now, break
+			break
+		}
+	}
+
+	return strings.Join(out, "\n"), startLine, endLine
 }
 
 /**

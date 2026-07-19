@@ -347,3 +347,55 @@ func (c *client) UpdateComment(ctx context.Context, owner, repo string, commentI
 	}
 	return nil
 }
+
+/**
+PostReviewComment creates a PR review comment attached to specific lines of code.
+Used to render native GitHub Copilot-style ````suggestion blocks.
+*/
+func (c *client) PostReviewComment(ctx context.Context, owner, repo string, prNumber int, body, path, commitSHA string, startLine, line int, token string) error {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/pulls/%d/comments", owner, repo, prNumber)
+
+	// Build the JSON payload GitHub expects for inline comments
+	// https://docs.github.com/en/rest/pulls/comments?apiVersion=2022-11-28#create-a-review-comment-for-a-pull-request
+	payload := map[string]interface{}{
+		"body":      body,
+		"commit_id": commitSHA,
+		"path":      path,
+		"line":      line,
+		"side":      "RIGHT", // The PR's side of the diff
+	}
+	
+	// start_line is required for multi-line comments
+	if startLine > 0 && startLine != line {
+		payload["start_line"] = startLine
+		payload["start_side"] = "RIGHT"
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal review comment payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(payloadBytes))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "AI-Code-Review-Bot")
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to perform request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("GitHub API returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
+}

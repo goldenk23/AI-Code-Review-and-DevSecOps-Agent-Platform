@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>CodePulse AI - Security Overview</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;600;700&amp;family=Geist+Mono:wght@400;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "inverse-primary": "#494bd6",
+                        "surface-variant": "#353534",
+                        "on-primary-container": "#0d0096",
+                        "secondary-fixed-dim": "#c8c6c5",
+                        "text-muted": "#a0a0a0",
+                        "outline": "#908fa0",
+                        "primary-fixed": "#e1e0ff",
+                        "on-secondary": "#313030",
+                        "surface-bright": "#3a3939",
+                        "border-light": "#e5e7eb",
+                        "on-surface": "#e5e2e1",
+                        "error-container": "#93000a",
+                        "info": "#1570ef",
+                        "inverse-surface": "#e5e2e1",
+                        "border-dark": "#232323",
+                        "surface-container-high": "#2a2a2a",
+                        "inverse-on-surface": "#313030",
+                        "high": "#d92d20",
+                        "on-error-container": "#ffdad6",
+                        "tertiary-fixed": "#ffdcc5",
+                        "primary": "#c0c1ff",
+                        "tertiary-fixed-dim": "#ffb783",
+                        "text-primary": "#ededed",
+                        "secondary-fixed": "#e5e2e1",
+                        "on-secondary-container": "#bab8b7",
+                        "on-tertiary-container": "#452000",
+                        "on-primary": "#1000a9",
+                        "background": "#131313",
+                        "on-secondary-fixed-variant": "#474646",
+                        "on-primary-fixed": "#07006c",
+                        "on-background": "#e5e2e1",
+                        "secondary-container": "#4a4949",
+                        "on-tertiary-fixed": "#301400",
+                        "on-primary-fixed-variant": "#2f2ebe",
+                        "on-secondary-fixed": "#1c1b1b",
+                        "surface-dim": "#131313",
+                        "primary-fixed-dim": "#c0c1ff",
+                        "primary-container": "#8083ff",
+                        "surface-container-low": "#1c1b1b",
+                        "surface-container": "#201f1f",
+                        "success": "#12b76a",
+                        "secondary": "#c8c6c5",
+                        "on-tertiary-fixed-variant": "#703700",
+                        "tertiary": "#ffb783",
+                        "on-tertiary": "#4f2500",
+                        "critical": "#9b1c1c",
+                        "low": "#667085",
+                        "error": "#ffb4ab",
+                        "surface-tint": "#c0c1ff",
+                        "surface": "#131313",
+                        "medium": "#f79009",
+                        "surface-container-lowest": "#0e0e0e",
+                        "tertiary-container": "#d97721",
+                        "on-error": "#690005",
+                        "surface-container-highest": "#353534",
+                        "outline-variant": "#464554",
+                        "on-surface-variant": "#c7c4d7"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "inset-card": "1.25rem",
+                        "margin-page": "2rem",
+                        "gutter": "1rem",
+                        "stack-normal": "1rem",
+                        "container-max": "1200px",
+                        "stack-dense": "0.5rem"
+                    },
+                    "fontFamily": {
+                        "headline-lg": ["Geist", "sans-serif"],
+                        "subheading": ["Geist", "sans-serif"],
+                        "code-base": ["Geist Mono", "monospace"],
+                        "headline-md": ["Geist", "sans-serif"],
+                        "code-sm": ["Geist Mono", "monospace"],
+                        "body-muted": ["Geist", "sans-serif"],
+                        "body-base": ["Geist", "sans-serif"],
+                        "caption": ["Geist", "sans-serif"]
+                    },
+                    "fontSize": {
+                        "headline-lg": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                        "subheading": ["16px", { "lineHeight": "24px", "fontWeight": "600" }],
+                        "code-base": ["13px", { "lineHeight": "20px", "fontWeight": "400" }],
+                        "headline-md": ["24px", { "lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600" }],
+                        "code-sm": ["11px", { "lineHeight": "16px", "fontWeight": "400" }],
+                        "body-muted": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
+                        "body-base": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
+                        "caption": ["12px", { "lineHeight": "16px", "fontWeight": "400" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .icon-fill {
+            font-variation-settings: 'FILL' 1;
+        }
+    </style>
+</head>
+<body class="bg-background text-text-primary font-body-base min-h-screen flex flex-col">
+<!-- TopNavBar -->
+<nav class="w-full top-0 sticky bg-background dark:bg-background border-b border-border-dark z-50">
+<div class="flex items-center justify-between px-margin-page h-16 w-full max-w-container-max mx-auto">
+<div class="flex items-center gap-8">
+<div class="font-headline-md text-headline-md font-bold text-primary dark:text-primary flex items-center gap-2">
+<span class="material-symbols-outlined icon-fill">shield</span>
+                    CodePulse AI
+                </div>
+<div class="hidden md:flex gap-6 h-full items-center">
+<a class="font-body-base text-body-base text-text-muted hover:text-text-primary h-full flex items-center" href="#">Dashboard</a>
+<a class="font-body-base text-body-base text-text-muted hover:text-text-primary h-full flex items-center" href="#">Repositories</a>
+<a class="font-body-base text-body-base text-primary border-b-2 border-primary h-full flex items-center pt-0.5" href="#">Security</a>
+<a class="font-body-base text-body-base text-text-muted hover:text-text-primary h-full flex items-center" href="#">Automation</a>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<button class="text-text-muted hover:text-text-primary hover:bg-surface-container-low transition-colors active:scale-95 duration-100 p-2 rounded-DEFAULT">
+<span class="material-symbols-outlined" data-icon="search">search</span>
+</button>
+<button class="text-text-muted hover:text-text-primary hover:bg-surface-container-low transition-colors active:scale-95 duration-100 p-2 rounded-DEFAULT">
+<span class="material-symbols-outlined" data-icon="notifications">notifications</span>
+</button>
+<button class="text-text-muted hover:text-text-primary hover:bg-surface-container-low transition-colors active:scale-95 duration-100 p-2 rounded-DEFAULT">
+<span class="material-symbols-outlined" data-icon="settings">settings</span>
+</button>
+<img alt="Developer Profile" class="w-8 h-8 rounded-full border border-border-dark object-cover ml-2" data-alt="A small, circular avatar image of a software developer's profile picture. The image should be minimalist and fit within a dark-mode UI context." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBZqKtb_2Y-ItxgiwhLgDdk_e-oxcBA73FCxXPgJ6EyRKBbcsuGnbehGzOF7kspMfTe4BKbpBpvrjJzzawAJytU52XASrKVJA9odeyDw2g_PbtHqpi75qlj7sXAtmARXji1nb46ukCxVA8Gk2RwPdFKWBZ82jAMUFpTkGv7rJKzGFruNn6u7_BDqkHXdV2BBHJkOCrBqEScCpJAOgpxwKIPEadBWpobZbO8cNpn90Ob-xMwcA-Yqyxepz8GOEYGpLMJu1U6AiabMJYg"/>
+</div>
+</div>
+</nav>
+<main class="flex-1 w-full max-w-container-max mx-auto px-margin-page py-8 flex flex-col gap-8">
+<!-- Header -->
+<header class="flex flex-col md:flex-row md:items-end justify-between gap-4">
+<div>
+<h1 class="font-headline-lg text-headline-lg text-text-primary">Security Overview</h1>
+<p class="font-body-muted text-body-muted text-text-muted mt-2">Aggregated DevSecOps metrics across all organization repositories.</p>
+</div>
+<div class="flex items-center gap-3">
+<span class="font-code-sm text-code-sm text-text-muted">LAST SCANNED: <span class="text-text-primary">2 MINS AGO</span></span>
+<button class="flex items-center gap-2 bg-surface-container-high border border-border-dark text-text-primary font-body-base text-body-base px-4 py-2 rounded-DEFAULT hover:bg-surface-container-highest transition-colors">
+<span class="material-symbols-outlined text-sm">filter_list</span> Filter
+                </button>
+</div>
+</header>
+<!-- Key Metrics Grid -->
+<section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+<div class="bg-[#111111] border border-border-dark rounded-lg p-inset-card flex flex-col gap-2 relative overflow-hidden">
+<div class="flex items-center justify-between text-text-muted font-body-muted text-body-muted">
+<span>Critical Findings</span>
+<span class="material-symbols-outlined text-[16px] text-critical icon-fill" style="font-variation-settings: 'FILL' 1;">diamond</span>
+</div>
+<div class="font-headline-lg text-headline-lg text-critical">14</div>
+<div class="flex items-center gap-1 font-caption text-caption text-text-muted">
+<span class="text-error flex items-center"><span class="material-symbols-outlined text-[12px]">trending_up</span> +3</span> vs last week
+                </div>
+<div class="absolute bottom-0 left-0 w-full h-1 bg-critical/20">
+<div class="h-full bg-critical w-1/4"></div>
+</div>
+</div>
+<div class="bg-[#111111] border border-border-dark rounded-lg p-inset-card flex flex-col gap-2 relative overflow-hidden">
+<div class="flex items-center justify-between text-text-muted font-body-muted text-body-muted">
+<span>High Findings</span>
+<span class="material-symbols-outlined text-[16px] text-high icon-fill" style="font-variation-settings: 'FILL' 1;">warning</span>
+</div>
+<div class="font-headline-lg text-headline-lg text-high">42</div>
+<div class="flex items-center gap-1 font-caption text-caption text-text-muted">
+<span class="text-success flex items-center"><span class="material-symbols-outlined text-[12px]">trending_down</span> -12</span> vs last week
+                </div>
+<div class="absolute bottom-0 left-0 w-full h-1 bg-high/20">
+<div class="h-full bg-high w-2/5"></div>
+</div>
+</div>
+<div class="bg-[#111111] border border-border-dark rounded-lg p-inset-card flex flex-col gap-2 relative overflow-hidden">
+<div class="flex items-center justify-between text-text-muted font-body-muted text-body-muted">
+<span>Avg. Time to Fix</span>
+<span class="material-symbols-outlined text-[16px] text-info">schedule</span>
+</div>
+<div class="font-headline-lg text-headline-lg text-text-primary">4.2<span class="font-headline-md text-headline-md text-text-muted ml-1">days</span></div>
+<div class="flex items-center gap-1 font-caption text-caption text-text-muted">
+<span class="text-success flex items-center"><span class="material-symbols-outlined text-[12px]">trending_down</span> -0.8 days</span>
+</div>
+<div class="absolute bottom-0 left-0 w-full h-1 bg-info/20">
+<div class="h-full bg-info w-3/5"></div>
+</div>
+</div>
+<div class="bg-[#111111] border border-border-dark rounded-lg p-inset-card flex flex-col gap-2 relative overflow-hidden">
+<div class="flex items-center justify-between text-text-muted font-body-muted text-body-muted">
+<span>Vulnerable Repos</span>
+<span class="material-symbols-outlined text-[16px] text-medium icon-fill" style="font-variation-settings: 'FILL' 1;">folder_open</span>
+</div>
+<div class="font-headline-lg text-headline-lg text-text-primary">18<span class="font-headline-md text-headline-md text-text-muted ml-1">/ 142</span></div>
+<div class="flex items-center gap-1 font-caption text-caption text-text-muted">
+<span class="text-text-muted flex items-center">12% of total</span>
+</div>
+<div class="absolute bottom-0 left-0 w-full h-1 bg-border-dark">
+<div class="h-full bg-medium w-[12%]"></div>
+</div>
+</div>
+</section>
+<!-- Main Content Split -->
+<section class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+<!-- Trend Chart Area (70%) -->
+<div class="lg:col-span-8 flex flex-col gap-4">
+<div class="bg-[#111111] border border-border-dark rounded-lg flex flex-col h-[400px]">
+<div class="border-b border-border-dark p-4 flex justify-between items-center">
+<h2 class="font-subheading text-subheading text-text-primary">Findings Over Time</h2>
+<div class="flex gap-2">
+<span class="flex items-center gap-1 font-caption text-caption text-text-muted"><span class="w-2 h-2 rounded-full bg-critical block"></span> Critical</span>
+<span class="flex items-center gap-1 font-caption text-caption text-text-muted ml-2"><span class="w-2 h-2 rounded-full bg-high block"></span> High</span>
+</div>
+</div>
+<div class="flex-1 p-4 flex items-center justify-center relative bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGRlZnM+PHBhdHRlcm4gaWQ9ImdyaWQiIHdpZHRoPSI0MCIgaGVpZ2h0PSI0MCIgcGF0dGVyblVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHBhdGggZD0iTSA0MCAwIEwgMCAwIDAgNDAiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzIzMjMyMyIgc3Ryb2tlLXdpZHRoPSIxIi8+PC9wYXR0ZXJuPjwvZGVmcz48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSJ1cmwoI2dyaWQpIiAvPjwvc3ZnPg==')]">
+<!-- Abstract Line Chart Visualization -->
+<svg class="absolute inset-0 w-full h-full p-4" preserveaspectratio="none" viewbox="0 0 100 100">
+<path d="M0,80 L20,75 L40,85 L60,50 L80,55 L100,20" fill="none" stroke="var(--tw-colors-critical)" stroke-width="2" vector-effect="non-scaling-stroke"></path>
+<path d="M0,90 L20,88 L40,70 L60,75 L80,40 L100,30" fill="none" stroke="var(--tw-colors-high)" stroke-width="2" vector-effect="non-scaling-stroke"></path>
+<!-- X Axis labels -->
+<text fill="var(--tw-colors-text-muted)" font-family="Geist Mono" font-size="3" vector-effect="non-scaling-stroke" x="0" y="98">Jan</text>
+<text fill="var(--tw-colors-text-muted)" font-family="Geist Mono" font-size="3" vector-effect="non-scaling-stroke" x="20" y="98">Feb</text>
+<text fill="var(--tw-colors-text-muted)" font-family="Geist Mono" font-size="3" vector-effect="non-scaling-stroke" x="40" y="98">Mar</text>
+<text fill="var(--tw-colors-text-muted)" font-family="Geist Mono" font-size="3" vector-effect="non-scaling-stroke" x="60" y="98">Apr</text>
+<text fill="var(--tw-colors-text-muted)" font-family="Geist Mono" font-size="3" vector-effect="non-scaling-stroke" x="80" y="98">May</text>
+<text fill="var(--tw-colors-text-muted)" font-family="Geist Mono" font-size="3" text-anchor="end" vector-effect="non-scaling-stroke" x="100" y="98">Jun</text>
+</svg>
+</div>
+</div>
+</div>
+<!-- Vulnerable Repos List (30%) -->
+<div class="lg:col-span-4 flex flex-col gap-4">
+<div class="bg-[#111111] border border-border-dark rounded-lg flex flex-col h-full max-h-[400px]">
+<div class="border-b border-border-dark p-4 flex justify-between items-center bg-surface-container-high/50 backdrop-blur-md">
+<h2 class="font-subheading text-subheading text-text-primary">Most Vulnerable Repos</h2>
+<a class="font-caption text-caption text-primary hover:underline" href="#">View All</a>
+</div>
+<div class="flex-1 overflow-y-auto p-2">
+<!-- Repo Item -->
+<div class="flex items-center justify-between p-3 rounded-lg hover:bg-[#1a1a1a] transition-colors cursor-pointer group border border-transparent hover:border-border-dark mb-1">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-text-muted group-hover:text-primary transition-colors">folder</span>
+<div>
+<div class="font-body-base text-body-base text-text-primary">auth-service-api</div>
+<div class="font-code-sm text-code-sm text-text-muted mt-0.5">nodejs • main</div>
+</div>
+</div>
+<div class="flex gap-2">
+<div class="bg-critical/10 border border-critical/30 text-critical font-code-sm px-1.5 py-0.5 rounded flex items-center gap-1">
+<span class="material-symbols-outlined text-[10px] icon-fill">diamond</span> 6
+                                </div>
+<div class="bg-high/10 border border-high/30 text-high font-code-sm px-1.5 py-0.5 rounded flex items-center gap-1">
+<span class="material-symbols-outlined text-[10px] icon-fill">warning</span> 12
+                                </div>
+</div>
+</div>
+<!-- Repo Item -->
+<div class="flex items-center justify-between p-3 rounded-lg hover:bg-[#1a1a1a] transition-colors cursor-pointer group border border-transparent hover:border-border-dark mb-1">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-text-muted group-hover:text-primary transition-colors">folder</span>
+<div>
+<div class="font-body-base text-body-base text-text-primary">payment-gateway</div>
+<div class="font-code-sm text-code-sm text-text-muted mt-0.5">golang • production</div>
+</div>
+</div>
+<div class="flex gap-2">
+<div class="bg-critical/10 border border-critical/30 text-critical font-code-sm px-1.5 py-0.5 rounded flex items-center gap-1">
+<span class="material-symbols-outlined text-[10px] icon-fill">diamond</span> 4
+                                </div>
+<div class="bg-high/10 border border-high/30 text-high font-code-sm px-1.5 py-0.5 rounded flex items-center gap-1">
+<span class="material-symbols-outlined text-[10px] icon-fill">warning</span> 8
+                                </div>
+</div>
+</div>
+<!-- Repo Item -->
+<div class="flex items-center justify-between p-3 rounded-lg hover:bg-[#1a1a1a] transition-colors cursor-pointer group border border-transparent hover:border-border-dark mb-1">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-text-muted group-hover:text-primary transition-colors">folder</span>
+<div>
+<div class="font-body-base text-body-base text-text-primary">frontend-dashboard</div>
+<div class="font-code-sm text-code-sm text-text-muted mt-0.5">react • develop</div>
+</div>
+</div>
+<div class="flex gap-2">
+<div class="bg-critical/10 border border-critical/30 text-critical font-code-sm px-1.5 py-0.5 rounded flex items-center gap-1">
+<span class="material-symbols-outlined text-[10px] icon-fill">diamond</span> 2
+                                </div>
+<div class="bg-high/10 border border-high/30 text-high font-code-sm px-1.5 py-0.5 rounded flex items-center gap-1">
+<span class="material-symbols-outlined text-[10px] icon-fill">warning</span> 15
+                                </div>
+</div>
+</div>
+<!-- Repo Item -->
+<div class="flex items-center justify-between p-3 rounded-lg hover:bg-[#1a1a1a] transition-colors cursor-pointer group border border-transparent hover:border-border-dark mb-1">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-text-muted group-hover:text-primary transition-colors">folder</span>
+<div>
+<div class="font-body-base text-body-base text-text-primary">legacy-batch-jobs</div>
+<div class="font-code-sm text-code-sm text-text-muted mt-0.5">java • master</div>
+</div>
+</div>
+<div class="flex gap-2">
+<div class="bg-critical/10 border border-critical/30 text-critical font-code-sm px-1.5 py-0.5 rounded flex items-center gap-1">
+<span class="material-symbols-outlined text-[10px] icon-fill">diamond</span> 2
+                                </div>
+<div class="bg-high/10 border border-high/30 text-high font-code-sm px-1.5 py-0.5 rounded flex items-center gap-1">
+<span class="material-symbols-outlined text-[10px] icon-fill">warning</span> 5
+                                </div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+</main>
+</body></html>

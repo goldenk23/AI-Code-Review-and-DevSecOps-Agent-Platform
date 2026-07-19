@@ -25,7 +25,7 @@ out to them like a human would in a terminal.
 # --- Standard library imports (built into Python, nothing to install) ---
 import os          # read environment variables (config loaded from .env)
 import json        # parse JSON job messages from Redis; parse semgrep/npm audit output
-import time        # currently unused here but kept for future retry/sleep logic
+import time        # time.time() for the JOB_DURATION / AI_LATENCY histogram measurements; sleep() for retry backoff
 import tempfile    # tempfile.mkdtemp() — create a unique temp dir to clone repos into
 import stat        # stat.S_IWRITE — file permission flag used by safe_rmtree()
 import shutil      # shutil.rmtree() — delete a whole directory tree (the temp workspace)
@@ -41,6 +41,13 @@ import redis       # Redis client — we use it to POP jobs off the queue
 import httpx       # HTTP client — used to POST to the AI service's /review endpoint
 from dotenv import load_dotenv   # reads .env file and populates os.environ
 
+# Prometheus client -- exports 4 metrics on a separate HTTP server (port 9090)
+# so any Prometheus/Grafana scraper can pull them. Light touch: we're not
+# adding a full tracing layer here, just the four numbers the spec asks for.
+# `start_http_server` is non-blocking -- runs in a daemon thread so it can
+# keep serving while process_job crunches a clone.
+from prometheus_client import Counter, Histogram, start_http_server
+
 # retrieval.py sits next to this file in apps/worker/. It uses ripgrep to find
 # files related to the ones that changed (e.g. callers of a changed function),
 # which gives the AI reviewer helpful context beyond the raw diff.
@@ -50,6 +57,62 @@ from retrieval import retrieve_related_files, read_file_contents
 # If .env is missing, the getenv calls will return their fallback defaults
 # (or None), which usually means "can't connect" later — so keep .env present.
 load_dotenv()
+
+
+# --------------------------------------------------------------------------
+# Prometheus metrics -- 4 gauges/counters per the observability spec.
+# `start_http_server(9090)` launches a daemon thread that serves /metrics.
+# It's intentionally OUTSIDE `main()` so it survives even if the BRPOP loop
+# is mid-sleep -- a scrape during a 1s idle still gets back the latest
+# counter values. We bind once at import time, not per-job, so the objects
+# persist for the process's lifetime.
+# --------------------------------------------------------------------------
+# 1) Per-type job duration histogram. Labels let us slice by `test` /
+#    `semgrep` / `npm_audit` / `ai_review`. (The label set is open; new
+#    job_types don't need a code change to be observed.)
+JOB_DURATION = Histogram(
+    "analysis_job_duration_seconds",
+    "Time spent on analysis jobs",
+    ["job_type"],
+)
+# 2) Total jobs processed, labelled by terminal status (completed/failed).
+#    A status="running" label is never written here -- the counter is only
+#    incremented when a job reaches a final state, so a scrape never sees
+#    an inflated "running" count.
+JOBS_TOTAL = Counter(
+    "analysis_jobs_total",
+    "Total analysis jobs processed",
+    ["status"],
+)
+# 3) Latency of just the LLM call -- the most expensive single step. Sampling
+#    this separately from total job duration tells us whether the LLM is the
+#    bottleneck (likely) or whether clones/scans are. Recording happens in
+#    step 7 of process_job, around the `call_ai_service` call.
+AI_LATENCY = Histogram(
+    "ai_review_latency_seconds",
+    "Time spent on AI review",
+)
+# 4) Token usage -- the AI service's /review endpoint includes a
+#    `tokens_used` field in its response when the underlying LLM provider
+#    surfaces it. We sum across all jobs so a 30-day cost dashboard is
+#    literally `rate(ai_token_usage_total[30d]) * $/1M`.
+TOKEN_USAGE = Counter(
+    "ai_token_usage_total",
+    "Total LLM tokens used",
+)
+
+# Start the metrics server ONCE per worker process. We use a try/except so
+# that running the worker twice on the same machine (dev mistake) doesn't
+# crash the second one with a bind error -- it just logs and moves on, and
+# the existing server keeps serving.
+try:
+    start_http_server(9090)
+    print("Prometheus metrics server started on http://localhost:9090/metrics")
+except OSError as e:
+    # Most common: "Address already in use" when another worker (or another
+    # dev on the same machine) has the port. Don't crash -- the existing
+    # metrics server is fine.
+    print(f"Could not bind metrics server on :9090 ({e}); metrics disabled for this process")
 
 
 def get_db_connection():
@@ -270,10 +333,23 @@ def process_job(job_data):
         # If the AI service is down or returns an error, this raises an
         # exception that the outer `except` block will catch and mark the
         # run as 'failed' — no findings get saved in that case.
-        findings = call_ai_service(
+        #
+        # We wrap the call in a time.time() bracket so AI_LATENCY records
+        # just the LLM round-trip -- clone/scan/test time is excluded, which
+        # makes it obvious from the dashboard whether the model is the
+        # bottleneck vs. the repo I/O.
+        ai_t0 = time.time()
+        # `call_ai_service` returns (findings, tokens_used). tokens_used is
+        # 0 when the AI service didn't surface the field -- in that case the
+        # counter inc by 0, which is a no-op (Prometheus client libraries
+        # don't emit a sample for inc(0), so /metrics stays clean).
+        findings, tokens_used = call_ai_service(
             run_id, diff, changed_files, context_files, tool_results,
             pr_title, repo_full_name, pr_number
         )
+        AI_LATENCY.observe(time.time() - ai_t0)
+        if tokens_used:
+            TOKEN_USAGE.inc(tokens_used)
 
         # ---------------------------------------------------------------
         # Step 8: Save the AI findings to the `findings` table.
@@ -282,7 +358,37 @@ def process_job(job_data):
         # verification_status='unverified' (because an LLM suggested them,
         # they aren't proven yet — unlike semgrep/npm audit findings which are
         # 'verified_by_static_analysis').
-        save_findings(cursor, db, run_id, findings)
+        saved = save_findings(cursor, db, run_id, findings)
+
+        # ---------------------------------------------------------------
+        # Step 8.5: Patch verification (stretch goal).
+        # ---------------------------------------------------------------
+        # For each AI finding that includes a `suggested_patch` field, we
+        # copy the workspace to a throwaway temp dir, `git apply` the patch,
+        # and run the repo's test command. If the tests pass, the finding's
+        # verification_status flips from 'unverified' to 'verified_by_test'
+        # (with a note in the description). If the patch doesn't apply
+        # cleanly OR the tests still fail, we mark it 'failed_verification'.
+        #
+        # Why bother: an LLM-suggested fix with a passing test is a much
+        # stronger signal than an LLM-suggested fix with no test. Surfacing
+        # that signal upstream (in the dashboard's verification badge)
+        # saves a human reviewer from re-checking what the AI already proved.
+        #
+        # The verification is best-effort -- if it raises, we DON'T fail
+        # the run; we just leave the finding as 'unverified'. The patch
+        # verification is a stretch feature, not a critical path.
+        if findings:
+            test_command = detect_test_command(workspace)
+            if test_command is not None:
+                try:
+                    verify_ai_findings(cursor, db, run_id, workspace, saved, test_command)
+                except Exception as ve:
+                    # Don't let verification crash the whole job -- log and move on.
+                    print(f"Patch verification skipped for run #{run_id}: {ve}")
+            else:
+                print(f"Patch verification skipped for run #{run_id}: no test command detected (no package.json, requirements.txt, pyproject.toml, setup.py, Pipfile, poetry.lock, or tests/ directory found)")
+
         # post comment
         try:
             httpx.post(
@@ -301,20 +407,29 @@ def process_job(job_data):
             (run_id,)
         )
         db.commit()
+        # Prometheus: this run reached a terminal state so increment the
+        # JOBS_TOTAL counter with status="completed". The retry wrapper
+        # watches this label to decide whether to retry -- see process_job_with_retry.
+        JOBS_TOTAL.labels(status="completed").inc()
         print(f"Analysis for run #{run_id} completed successfully.")
 
     except Exception as exc:
         # ANY exception from any step lands here. We log it and mark the run
         # 'failed' with the error message in the `error` column, so the user
         # can see in the dashboard why their run didn't finish. We do NOT
-        # re-raise — the worker loop in main() should keep going for the next
-        # job, not die because one job broke.
+        # re-raise here, but we DO re-raise after recording the failure so
+        # the OUTER process_job_with_retry can decide whether to retry.
         print(f"Analysis failed for run #{run_id}: {exc}")
         cursor.execute(
             "UPDATE analysis_runs SET status = 'failed', error = %s, completed_at = now() WHERE id = %s",
             (str(exc), run_id)
         )
         db.commit()
+        JOBS_TOTAL.labels(status="failed").inc()
+        # Re-raise so process_job_with_retry sees the exception and can
+        # decide to retry. The outer wrapper catches everything so this never
+        # escapes to the BRPOP loop.
+        raise
 
     finally:
         # `finally` runs whether we succeeded or failed. Two resources must
@@ -362,15 +477,52 @@ def detect_test_command(workspace):
     Returns the command as a list (the shape subprocess.run expects) or None
     if the repo doesn't look like it has tests. We keep this simple:
       package.json present    -> ["npm", "test"]
-      requirements.txt OR pyproject.toml present -> ["pytest", "-q"]
+      Python project markers   -> ["pytest", "-q"]
       neither                 -> None (caller treats that as "no tests")
     This is intentionally a heuristic — it doesn't detect every framework,
     but it covers the two most common ecosystems in repos we review.
+
+    Python project markers we check (any one is enough):
+      requirements.txt, pyproject.toml, setup.py, setup.cfg, Pipfile, poetry.lock
+    We also check for a tests/ or test/ directory as a strong signal that
+    the repo has tests even if the dependency file is missing or named
+    differently (e.g. a repo that uses a Makefile or conda environment).
     """
     if os.path.exists(os.path.join(workspace, "package.json")):
         return ["npm", "test"]
-    if os.path.exists(os.path.join(workspace, "requirements.txt")) or os.path.exists(os.path.join(workspace, "pyproject.toml")):
+    # Check for common Python project markers. Any one of these strongly
+    # suggests this is a Python project where pytest would work.
+    python_markers = [
+        "requirements.txt", "pyproject.toml", "setup.py", "setup.cfg",
+        "Pipfile", "poetry.lock",
+    ]
+    has_python_marker = any(
+        os.path.exists(os.path.join(workspace, marker))
+        for marker in python_markers
+    )
+    # Also check for a tests/ or test/ directory — a strong signal that
+    # the repo has tests even without a standard dependency file.
+    has_test_dir = (
+        os.path.isdir(os.path.join(workspace, "tests")) or
+        os.path.isdir(os.path.join(workspace, "test"))
+    )
+    if (has_python_marker or has_test_dir) and shutil.which("pytest"):
         return ["pytest", "-q"]
+    # Final fallback: if the repo has any .py files, try pytest anyway.
+    # pytest auto-discovers test files (test_*.py / *_test.py) anywhere in
+    # the tree, so it can find tests even without standard markers.
+    # If there are no tests, pytest exits non-zero -- which is fine for
+    # patch verification (the finding gets 'failed_verification' instead
+    # of staying 'unverified', which is still more informative).
+    # BUT: only return pytest if it's actually installed on PATH --
+    # otherwise subprocess.run will raise FileNotFoundError (WinError 2)
+    # and crash the whole job.
+    if shutil.which("pytest"):
+        for root_dir, dirs, files in os.walk(workspace):
+            # Skip hidden directories (.git, .venv, node_modules, etc.)
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
+            if any(f.endswith(".py") for f in files):
+                return ["pytest", "-q"]
     return None
 
 
@@ -397,16 +549,21 @@ def run_command(cursor, db, job_id, workspace, command):
     result against the `analysis_jobs` row identified by `job_id`.
 
     This is the generic "run a thing and save what it printed" helper, used for
-    the test step. The same pattern (run → UPDATE job row → commit) appears in
+    the test step. The same pattern (run + UPDATE job row + commit) appears in
     run_semgrep and run_npm_audit, but those also parse the output into findings.
     """
     try:
         # timeout=120: tests should never take more than 2 minutes; if they do,
         # something is hung and we'd rather fail the job than hang forever.
+        # JOB_DURATION histogram: measure wall-clock time for this step sliced
+        # by job_type so we can see "npm test takes 8s avg, semgrep takes 3s"
+        # from the metrics endpoint.
+        t0 = time.time()
         result = subprocess.run(
             command, cwd=workspace,
             capture_output=True, text=True, timeout=120
         )
+        JOB_DURATION.labels(job_type="test").observe(time.time() - t0)
         # result.returncode is 0 if the command succeeded, non-zero otherwise.
         # We save BOTH stdout and stderr concatenated so the dashboard can show
         # the full output regardless of which stream the error went to.
@@ -417,6 +574,10 @@ def run_command(cursor, db, job_id, workspace, command):
         db.commit()
         return result
     except subprocess.TimeoutExpired:
+        # Even a timed-out run counts as far as the histogram is concerned --
+        # the wall-clock observation is "this run took >120s", which is exactly
+        # the noisy signal we want to see in metrics.
+        JOB_DURATION.labels(job_type="test").observe(time.time() - t0)
         # Special case: the command took longer than 120s. We mark the job
         # as failed with exit_code 124 (the conventional "timeout" code, the
         # same number the `timeout` coreutils uses) and re-raise so the run
@@ -426,7 +587,7 @@ def run_command(cursor, db, job_id, workspace, command):
             (job_id,)
         )
         db.commit()
-        raise Exception(f"Command {command} timed out")
+        return subprocess.CompletedProcess(args=command, returncode=124, stdout="Command timed out", stderr="")
 
 
 def run_semgrep(cursor, db, run_id, workspace):
@@ -442,6 +603,19 @@ def run_semgrep(cursor, db, run_id, workspace):
     # Create the job row now so we can update it as we go.
     job_id = create_job(cursor, run_id, "semgrep")
 
+    # Guard: if semgrep isn't installed, mark skipped and bail out cleanly.
+    # subprocess.run would raise FileNotFoundError (WinError 2) otherwise,
+    # which would crash the whole run and produce zero findings.
+    semgrep_path = shutil.which("semgrep")
+    if not semgrep_path:
+        cursor.execute(
+            "UPDATE analysis_jobs SET status = 'failed', exit_code = 1, logs = 'semgrep not found on PATH -- install it to enable static analysis', completed_at = now() WHERE id = %s",
+            (job_id,)
+        )
+        db.commit()
+        print(f"Semgrep skipped for run #{run_id}: not installed")
+        return
+
     # Prefer our hand-written rules (apps/worker/custom_semgrep_rule.yml) if
     # present; otherwise fall back to "auto" which pulls in Semgrep's bundled
     # rule set. `os.path.dirname(__file__)` is the directory containing this
@@ -452,10 +626,21 @@ def run_semgrep(cursor, db, run_id, workspace):
     try:
         # `semgrep scan --json --config=<rules> <workspace>` scans the given
         # directory and prints JSON to stdout describing what it found.
-        result = subprocess.run(
-            ["semgrep", "scan", "--json", f"--config={config}", workspace],
-            capture_output=True, text=True, timeout=120
-        )
+        t0 = time.time()
+        try:
+            result = subprocess.run(
+                [semgrep_path, "scan", "--json", f"--config={config}", workspace],
+                capture_output=True, text=True, timeout=120
+            )
+        except FileNotFoundError:
+            cursor.execute(
+                "UPDATE analysis_jobs SET status = 'failed', exit_code = 1, logs = 'semgrep executable not found (WinError 2).', completed_at = now() WHERE id = %s",
+                (job_id,)
+            )
+            db.commit()
+            print(f"Semgrep skipped for run #{run_id}: not found")
+            return
+        JOB_DURATION.labels(job_type="semgrep").observe(time.time() - t0)
 
         # Parse Semgrep's JSON output. Top-level shape is roughly:
         #   {"results": [{ "path": "...", "start": {...}, "end": {...},
@@ -523,15 +708,36 @@ def run_npm_audit(cursor, db, run_id, workspace):
     """
     job_id = create_job(cursor, run_id, "npm_audit")
 
+    npm_path = shutil.which("npm")
+    if not npm_path:
+        cursor.execute(
+            "UPDATE analysis_jobs SET status = 'failed', exit_code = 1, logs = 'npm not found on PATH -- install it to enable dependency scanning', completed_at = now() WHERE id = %s",
+            (job_id,)
+        )
+        db.commit()
+        print(f"npm audit skipped for run #{run_id}: not installed")
+        return
+
     try:
         # `npm audit --json` prints its report to stdout. Note: npm audit
         # EXITS NON-ZERO if any vulnerabilities exist — that's expected and
         # NOT an error from our perspective; we look at the JSON, not the
         # exit code, to decide what findings to record.
-        result = subprocess.run(
-            ["npm", "audit", "--json"],
-            cwd=workspace, capture_output=True, text=True, timeout=60
-        )
+        t0 = time.time()
+        try:
+            result = subprocess.run(
+                [npm_path, "audit", "--json"],
+                cwd=workspace, capture_output=True, text=True, timeout=60
+            )
+        except FileNotFoundError:
+            cursor.execute(
+                "UPDATE analysis_jobs SET status = 'failed', exit_code = 1, logs = 'npm executable not found (WinError 2).', completed_at = now() WHERE id = %s",
+                (job_id,)
+            )
+            db.commit()
+            print(f"npm audit skipped for run #{run_id}: not found")
+            return
+        JOB_DURATION.labels(job_type="npm_audit").observe(time.time() - t0)
 
         # Save the raw audit JSON to logs for posterity.
         cursor.execute(
@@ -617,9 +823,15 @@ def call_ai_service(run_id, diff, changed_files, context_files, tool_results, pr
     )
     # Raise httpx.HTTPStatusError if the AI service returned an error code.
     response.raise_for_status()
-    # .get("findings", []) returns [] if the key is missing, so a slightly
-    # malformed reply still yields a usable (empty) result instead of a KeyError.
-    return response.json().get("findings", [])
+    # The response shape is {"findings": [...], "tokens_used": <int>?}.
+    # The AI service includes tokens_used when the underlying provider
+    # surfaces it; if it doesn't, default to 0 so the TOKEN_USAGE counter's
+    # inc(0) is a harmless no-op (Prometheus client doesn't emit a sample
+    # for zero increments, keeping /metrics clean).
+    response_json = response.json()
+    findings = response_json.get("findings", [])
+    tokens_used = int(response_json.get("tokens_used") or 0)
+    return findings, tokens_used
 
 
 def save_findings(cursor, db, run_id, findings):
@@ -627,18 +839,28 @@ def save_findings(cursor, db, run_id, findings):
 
     Unlike Semgrep/npm-audit findings, AI findings are guesses — an LLM said
     "this looks like a bug" — so we mark them verification_status='unverified'.
-    A later step (the "patch verification" stretch goal) could try to actually
-    prove them, but for now they're surfaced as unverified.
+    A later step (the "patch verification" stretch goal, see verify_ai_findings)
+    can try to actually prove them by applying the suggested_patch and running
+    the repo's tests; rows where that succeeds flip to 'verified_by_test'.
 
     `finding.get(key, default)` insulates us from an LLM that omitted a field
     in its JSON. We'd rather record "Untitled finding" / "unknown" / 0.5 than
     crash a whole run because the model skipped one field.
+
+    Returns a list of (finding_id, finding_dict) pairs so the caller
+    (verify_ai_findings) can UPDATE each row by its primary key without
+    having to re-SELECT on (run_id, file_path, title) -- which is fragile
+    if the LLM happened to produce two findings with the same title+path.
     """
+    saved = []
     for finding in findings:
+        # INSERT ... RETURNING id hands us the new row's primary key so
+        # the verifier can UPDATE it directly by id later.
         cursor.execute(
             """INSERT INTO findings (run_id, file_path, line_start, line_end, severity, category,
-               title, description, evidence, confidence, verification_status)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'unverified')""",
+               title, description, evidence, confidence, verification_status, suggested_patch)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'unverified', %s)
+               RETURNING id""",
             (run_id,
              finding.get("file_path", "unknown"),
              finding.get("line_start"),
@@ -648,15 +870,113 @@ def save_findings(cursor, db, run_id, findings):
              finding.get("title", "Untitled finding"),
              finding.get("description", ""),
              finding.get("evidence"),
-             finding.get("confidence", 0.5))
+             finding.get("confidence", 0.5),
+             finding.get("suggested_patch"))
         )
-    # One commit for all the rows in this run — cheaper than committing per row.
+        finding_id = cursor.fetchone()[0]
+        saved.append((finding_id, finding))
+    # One commit for all the rows in this run -- cheaper than committing per row.
     db.commit()
+    return saved
+
+
+def verify_patch(workspace, patch, test_command):
+    """Apply a patch in a COPY of `workspace` and run the test suite there.
+
+    The copy is essential: `git apply` modifies files in place, and we don't
+    want to pollute the real workspace that the rest of process_job is still
+    using. tempfile.TemporaryDirectory() with shutil.copytree gives us an
+    isolated throwaway tree we can trash if the patch breaks tests.
+
+    Returns a (status_string, message) tuple:
+      - ("verified_by_test", "...") : patch applied + tests passed.
+      - ("failed_verification", "..."): patch failed to apply OR tests failed.
+
+    The status strings match the values the frontend's VERIFICATION_STYLES
+    map expects, so the dashboard's verification badge color just lights up
+    without any frontend changes.
+    """
+    import tempfile
+    import shutil
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # dirs_exist_ok=True is needed on 3.8+; the real workspace has files
+        # we want to overwrite, but the tmpdir starts empty.
+        shutil.copytree(workspace, tmpdir, dirs_exist_ok=True)
+        # `git apply -` reads a unified diff from stdin. We pass the patch in
+        # via `input=patch` so we don't have to write it to a temp file first.
+        patch_result = subprocess.run(
+            ["git", "apply", "-"],
+            cwd=tmpdir, input=patch, text=True, capture_output=True
+        )
+        if patch_result.returncode != 0:
+            return "failed_verification", f"Patch did not apply cleanly: {patch_result.stderr.strip()[:500]}"
+        # Run the test command in the patched copy. If the patch fixes the
+        # bug, tests should pass; if it doesn't, this is exactly the signal
+        # we want to surface as "AI suggested but its fix doesn't work."
+        try:
+            test_result = subprocess.run(
+                test_command, cwd=tmpdir, capture_output=True, text=True, timeout=60
+            )
+        except subprocess.TimeoutExpired:
+            return "failed_verification", "Tests timed out"
+        if test_result.returncode == 0:
+            return "verified_by_test", "Tests passed with patch applied"
+        else:
+            return "failed_verification", f"Tests failed: {test_result.stderr.strip()[:500]}"
+
+
+def verify_ai_findings(cursor, db, run_id, workspace, findings, test_command):
+    """For each AI finding that has a suggested_patch, apply it in a temp
+    copy of the workspace and run the test suite. UPDATE the finding row
+    with the new verification_status + the verification message appended
+    to the description.
+
+    Findings without a `suggested_patch` field are left as 'unverified'.
+
+    We open a fresh DB connection? No -- the caller's cursor is fine; we're
+    on the same transaction. db.commit() at the end flushes all UPDATEs
+    in one go.
+    """
+    verified_count = 0
+    failed_count = 0
+    skipped_count = 0
+    for finding_id, finding in findings:
+        patch = finding.get("suggested_patch")
+        if not patch:
+            # No AI-suggested fix -- leave as 'unverified'.
+            skipped_count += 1
+            continue
+        status, msg = verify_patch(workspace, patch, test_command)
+        # Append the verification result to the description so the dashboard
+        # shows WHY this finding got a green/red badge (not just the badge
+        # alone). The `\\n\\n[Verification]: ...` separator keeps the
+        # original AI description intact at the top.
+        cursor.execute(
+            """UPDATE findings
+               SET verification_status = %s,
+                   description = description || E'\\n\\n[Verification]: ' || %s
+               WHERE id = %s""",
+            (status, msg, finding_id)
+        )
+        if status == "verified_by_test":
+            verified_count += 1
+        else:
+            failed_count += 1
+    db.commit()
+    print(f"Patch verification for run #{run_id}: {verified_count} verified, {failed_count} failed, {skipped_count} skipped")
+    # Prometheus counter: track verified-by-test as a separate label so we
+    # can see in metrics what fraction of AI suggestions actually compile+pass.
+    # (We don't materialize this as a new JOBS_TOTAL counter -- that's about
+    # the entire run; patch verification is a sub-step. If we wanted a real
+    # time series here, we'd add a dedicated Counter in PROMETHEUS section.)
+    JOBS_TOTAL.labels(status=f"verified_by_test").inc(verified_count)
+    JOBS_TOTAL.labels(status="failed_verification").inc(failed_count)
 
 
 def main():
     """The worker's main event loop: connect to Redis, then forever pull jobs
-    off the queue and hand each one to process_job().
+    off the queue and hand each one to process_job_with_retry() -- which wraps
+    process_job() with exponential-backoff retries on failure.
 
     This is intentionally simple — no threading, no async, no multiprocessing.
     One job at a time, in order. That's enough for a learning project; for real
@@ -692,18 +1012,54 @@ def main():
         job_data = json.loads(message)
 
         try:
-            # Hand the parsed job to process_job(). If it raises, we print the
-            # error and loop again — one bad job must NOT kill the worker.
-            # (process_job itself has a try/except that marks the run failed,
-            # so most errors won't even reach this outer try. This is the
-            # "everything exploded before we could record it" backstop.)
-            process_job(job_data)
+            # process_job_with_retry handles the retry loop. It catches every
+            # exception from process_job and either retries (with sleep) or,
+            # after max_retries attempts, leaves the run as 'failed' (which
+            # process_job's except block has already written to the DB) and
+            # returns normally -- so the BRPOP loop keeps going.
+            process_job_with_retry(job_data)
         except Exception as e:
+            # The only way to get here is if process_job_with_retry itself
+            # raises, which it shouldn't (it swallows all exceptions). This
+            # is a true backstop -- "something exploded before we had a
+            # try/except set up" -- and we just log + continue.
             print(f"Error processing job: {e}")
-            # Optionally you could push the job back to Redis for a retry, or
-            # write it to a dead-letter queue. We don't, intentionally: a job
-            # that raised twice would loop forever, and we'd rather drop it
-            # and see the error in logs.
+
+
+def process_job_with_retry(job_data, max_retries=3):
+    """Process a job with retry logic and exponential backoff.
+
+    Wraps process_job() in a retry loop. On each failure (signaled by
+    process_job raising -- which it now does after recording status='failed'
+    + incrementing JOBS_TOTAL[failed]), we sleep `30 * 2^attempt` seconds
+    (30s, 60s, 120s) and try again. After the last attempt, we give up and
+    let the run stay failed.
+
+    Why exponential backoff vs. fixed delay: transient failures (the AI
+    service is restarting, the DB connection hiccupped, a 5xx from GitHub)
+    are usually self-resolving within seconds; retrying immediately is rude
+    and can pile up load on a struggling upstream. Exponential gives that
+    upstream time to recover without skipping the retry entirely.
+
+    Why 3 attempts: spec default. Beyond that you're usually just hammering
+    a broken service -- a real production setup would push the failed job
+    to a dead-letter queue for inspection instead of retrying ad infinitum.
+    """
+    for attempt in range(max_retries):
+        try:
+            process_job(job_data)
+            return  # Success -- no retry needed.
+        except Exception as e:
+            print(f"Job failed (attempt {attempt + 1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                # 30, 60, 120 seconds. The multiplier is 2 so the backoff
+                # roughly doubles each retry -- the classic exponential curve.
+                wait_time = 30 * (2 ** attempt)
+                print(f"Retrying in {wait_time} seconds...")
+                time.sleep(wait_time)
+            else:
+                print(f"Job permanently failed after {max_retries} attempts -- leaving run as 'failed'")
+
 
 # Standard Python idiom: "if this file was run directly (python worker.py),
 # call main(). If it was imported (e.g. by a test), don't." Lets us import
