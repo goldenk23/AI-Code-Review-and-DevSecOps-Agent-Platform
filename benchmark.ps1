@@ -40,7 +40,7 @@ function Row($name, $value, $unit, $notes) {
 # Helper: fetch /api/analyses once and return the runs as an array (never $null,
 # even when the API returns JSON `null` for an empty table).
 function Get-Analyses {
-    $content = (Invoke-WebRequest "http://localhost:8080/api/analyses" -UseBasicParsing).Content
+    $content = (Invoke-WebRequest "http://localhost:8080/api/analyses" -UseBasicParsing -Headers (Get-ApiHeaders)).Content
     $runs = $content | ConvertFrom-Json
     if (-not $runs) { return @() }
     return @($runs)
@@ -67,6 +67,21 @@ function Get-WebhookSecret {
         if ($line) { return ($line -split "=", 2)[1].Trim() }
     }
     return "testsecret123"
+}
+
+function Get-ApiKey {
+    $envFile = Join-Path $root "apps\api\.env"
+    if (Test-Path $envFile) {
+        $line = Get-Content $envFile | Where-Object { $_ -match "^API_KEY=" } | Select-Object -First 1
+        if ($line) { return ($line -split "=", 2)[1].Trim() }
+    }
+    return $env:API_KEY
+}
+
+function Get-ApiHeaders {
+    $key = Get-ApiKey
+    if ($key) { return @{ "X-API-Key" = $key } }
+    return @{}
 }
 
 # Helper: GitHub-style HMAC-SHA256 hex signature for a request body.
@@ -128,7 +143,7 @@ function Get-RunLatencies($runs) {
     $e2e = @(); $proc = @(); $firstStarted = $null; $lastCompleted = $null
     foreach ($run in $runs) {
         try {
-            $d = (Invoke-WebRequest "http://localhost:8080/api/analyses/$($run.id)" -UseBasicParsing).Content | ConvertFrom-Json
+            $d = (Invoke-WebRequest "http://localhost:8080/api/analyses/$($run.id)" -UseBasicParsing -Headers (Get-ApiHeaders)).Content | ConvertFrom-Json
             if (-not $d.completed_at) { continue }
             $created   = [DateTimeOffset]::Parse($run.created_at, [Globalization.CultureInfo]::InvariantCulture)
             $completed = [DateTimeOffset]::Parse($d.completed_at, [Globalization.CultureInfo]::InvariantCulture)
@@ -197,7 +212,11 @@ if ($Only -in @("all","api")) {
     Write-Host "`n==> Benchmark 1+2: API throughput + latency (hey)" -ForegroundColor Cyan
     $hey = "$env:USERPROFILE\go\bin\hey.exe"
     if (-not (Test-Path $hey)) { $hey = "hey" }
-    $out = & $hey -n 5000 -c 50 http://localhost:8080/api/analyses 2>&1 | Out-String
+    $heyArgs = @("-n", "5000", "-c", "50")
+    $apiKey = Get-ApiKey
+    if ($apiKey) { $heyArgs += @("-H", "X-API-Key: $apiKey") }
+    $heyArgs += "http://localhost:8080/api/analyses"
+    $out = & $hey @heyArgs 2>&1 | Out-String
 
     $rps = ([regex]::Match($out, "Requests/sec:\s+([\d.]+)")).Groups[1].Value
 

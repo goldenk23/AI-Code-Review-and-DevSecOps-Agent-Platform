@@ -189,6 +189,13 @@ if (-not $hasCb) {
     Write-OK "GITHUB_CALLBACK_URL already configured"
 }
 
+# The API loads apps/api/.env itself, but the worker and Next server are child
+# processes and also need the shared key for authenticated /api calls.
+$apiKeyLine = Get-Content $apiEnv | Where-Object { $_ -match "^API_KEY=" } | Select-Object -First 1
+if ($apiKeyLine) {
+    $env:API_KEY = ($apiKeyLine -split "=", 2)[1].Trim()
+}
+
 # Load AI service env vars (for AI_SERVICE_WORKERS)
 $aiEnv = "$root\apps\ai-service\.env"
 if (Test-Path $aiEnv) {

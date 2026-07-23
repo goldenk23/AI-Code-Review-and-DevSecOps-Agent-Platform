@@ -12,12 +12,12 @@ import (
 	"github.com/joho/godotenv" //reads variables from a `.env` file.
 	"go.uber.org/zap"          //structured JSON logger -- replaces stdlib `log` for prod-grade logs
 
+	"github.com/goldenk23/ai-devsecops-reviewer/api/internal/api"
 	"github.com/goldenk23/ai-devsecops-reviewer/api/internal/auth"
 	"github.com/goldenk23/ai-devsecops-reviewer/api/internal/database"
-	"github.com/goldenk23/ai-devsecops-reviewer/api/internal/webhook"
 	"github.com/goldenk23/ai-devsecops-reviewer/api/internal/github"
 	"github.com/goldenk23/ai-devsecops-reviewer/api/internal/queue"
-	"github.com/goldenk23/ai-devsecops-reviewer/api/internal/api"
+	"github.com/goldenk23/ai-devsecops-reviewer/api/internal/webhook"
 )
 
 // corsMiddleware adds CORS headers so the browser (localhost:3000) can call
@@ -111,7 +111,17 @@ func main() {
 
 	// create webhook handler
 	ghclient := github.NewClient()
-	queueClient := queue.NewClient("localhost:6379")
+	// Service addresses are configurable so API, Redis, and workers can run on
+	// different hosts. Defaults preserve the local development loop.
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379"
+	}
+	workerMetricsURL := os.Getenv("WORKER_METRICS_URL")
+	if workerMetricsURL == "" {
+		workerMetricsURL = "http://localhost:9090/metrics"
+	}
+	queueClient := queue.NewClient(redisAddr)
 	webhookHandler := &webhook.Handler{DB: dbpool, GitHub: ghclient, Queue: queueClient}
 
 	// create api handler
@@ -139,7 +149,7 @@ func main() {
 	// avoids CORS headaches for the dashboard).
 	r.Get("/worker/health", func(w http.ResponseWriter, r *http.Request) {
 		// 2-second timeout -- the worker should respond instantly.
-		resp, err := (&http.Client{Timeout: 2_000_000_000}).Get("http://localhost:9090/metrics")
+		resp, err := (&http.Client{Timeout: 2_000_000_000}).Get(workerMetricsURL)
 		if err != nil {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			w.Write([]byte(`{"status":"down","error":"` + err.Error() + `"}`))
@@ -148,7 +158,7 @@ func main() {
 		defer resp.Body.Close()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"up","metrics_endpoint":"http://localhost:9090/metrics"}`))
+		w.Write([]byte(`{"status":"up","metrics_endpoint":"` + workerMetricsURL + `"}`))
 	})
 
 	// Auth routes
@@ -185,7 +195,7 @@ func main() {
 		// (Live status is at /worker/health -- the call below returns
 		// the URL the dashboard should open for raw metrics.)
 		r.Get("/insights/worker-status", func(w http.ResponseWriter, r *http.Request) {
-			resp, err := (&http.Client{Timeout: 2_000_000_000}).Get("http://localhost:9090/metrics")
+			resp, err := (&http.Client{Timeout: 2_000_000_000}).Get(workerMetricsURL)
 			status := "up"
 			if err != nil || resp.StatusCode != 200 {
 				status = "down"
@@ -194,7 +204,7 @@ func main() {
 				resp.Body.Close()
 			}
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"status":"` + status + `","metrics_url":"http://localhost:9090/metrics"}`))
+			w.Write([]byte(`{"status":"` + status + `","metrics_url":"` + workerMetricsURL + `"}`))
 		})
 
 		// Aggregated insights -- back the /security page's KPI strip and

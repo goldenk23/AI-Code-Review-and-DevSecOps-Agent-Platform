@@ -77,6 +77,7 @@ services:
       DATABASE_URL: postgres://review:reviewpass@postgres:5432/ai_review
       REDIS_URL: redis://redis:6379/0
       REDIS_ADDR: redis:6379
+      WORKER_METRICS_URL: http://worker:9090/metrics
       PORT: "8080"
       # Shared API key protecting /api. Defaults so the api and web containers
       # get the SAME value; override by exporting API_KEY before compose up.
@@ -109,6 +110,8 @@ services:
       DATABASE_URL: postgres://review:reviewpass@postgres:5432/ai_review
       REDIS_URL: redis://redis:6379/0
       AI_SERVICE_URL: http://ai-service:8000
+      API_BASE_URL: http://api:8080
+      API_KEY: ${API_KEY:-dev-local-api-key}
     env_file: ./apps/worker/.env
     depends_on:
       postgres: { condition: service_healthy }

@@ -4,6 +4,7 @@ Run with:  cd apps/worker && python -m pytest test_worker.py -v
 """
 import os
 import tempfile
+import worker
 from worker import detect_test_command, map_semgrep_severity
 
 
@@ -65,3 +66,25 @@ def test_detects_pytest_from_pyproject():
     with tempfile.TemporaryDirectory() as d:
         _write(d, "pyproject.toml")
         assert detect_test_command(d) == ["pytest", "-q"]
+
+
+def test_post_comments_uses_configured_api_and_key(monkeypatch):
+    captured = {}
+
+    class Response:
+        def raise_for_status(self):
+            captured["checked"] = True
+
+    def fake_post(url, **kwargs):
+        captured.update(url=url, **kwargs)
+        return Response()
+
+    monkeypatch.setenv("API_BASE_URL", "https://api.internal/")
+    monkeypatch.setenv("API_KEY", "secret")
+    monkeypatch.setattr(worker.httpx, "post", fake_post)
+
+    worker.post_comments(42)
+
+    assert captured["url"] == "https://api.internal/api/analyses/42/post-comments"
+    assert captured["headers"] == {"X-API-Key": "secret"}
+    assert captured["checked"] is True

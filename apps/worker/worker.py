@@ -148,6 +148,23 @@ def get_redis_connection():
     return redis.Redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
 
 
+def api_headers():
+    """Headers shared by worker-to-API calls; empty in unauthenticated dev."""
+    api_key = os.getenv("API_KEY")
+    return {"X-API-Key": api_key} if api_key else {}
+
+
+def post_comments(run_id):
+    """Ask the API to publish this run's GitHub review comments."""
+    base_url = os.getenv("API_BASE_URL", "http://localhost:8080").rstrip("/")
+    response = httpx.post(
+        f"{base_url}/api/analyses/{run_id}/post-comments",
+        headers=api_headers(),
+        timeout=30,
+    )
+    response.raise_for_status()
+
+
 def process_job(job_data):
     """
     Process a single analysis job end-to-end.
@@ -405,12 +422,11 @@ def process_job(job_data):
             else:
                 print(f"Patch verification skipped for run #{run_id}: no test command detected (no package.json, requirements.txt, pyproject.toml, setup.py, Pipfile, poetry.lock, or tests/ directory found)")
 
-        # post comment
+        # Post the completed review through the configured API service. Comment
+        # delivery remains best-effort so a transient GitHub failure does not
+        # discard analysis results already stored in Postgres.
         try:
-            httpx.post(
-                f"http://localhost:8080/api/analyses/{run_id}/post-comments",
-                timeout=30
-            )
+            post_comments(run_id)
             print(f"Posted comment for run #{run_id}")
         except Exception as e:
             print(f"Failed to post comment: {e}")
