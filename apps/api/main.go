@@ -107,7 +107,7 @@ func main() {
 	webhookHandler := &webhook.Handler{DB: dbpool, GitHub: ghclient, Queue: queueClient}
 
 	// create api handler
-	apiHandlers := &api.Handlers{DB: dbpool}
+	apiHandlers := &api.Handlers{DB: dbpool, Queue: queueClient}
 
 	// Create a new chi router
 	r := chi.NewRouter()
@@ -194,6 +194,10 @@ func main() {
 		// Automation settings -- singleton row updated via PUT.
 		r.Get("/settings", apiHandlers.GetSettings)
 		r.Put("/settings", apiHandlers.UpdateSettings)
+
+		// Dead-letter queue -- jobs that permanently failed (all retries
+		// exhausted) and were parked in Redis for inspection/replay.
+		r.Get("/dead-jobs", apiHandlers.ListDeadJobs)
 	})
 
 	r.Post("/webhooks/github", webhookHandler.HandleGitHubWebhook)

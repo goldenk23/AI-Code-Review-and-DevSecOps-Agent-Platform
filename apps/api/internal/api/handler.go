@@ -15,11 +15,13 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/goldenk23/ai-devsecops-reviewer/api/internal/auth"
 	"github.com/goldenk23/ai-devsecops-reviewer/api/internal/github"
+	"github.com/goldenk23/ai-devsecops-reviewer/api/internal/queue"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Handlers struct {
-	DB *pgxpool.Pool
+	DB    *pgxpool.Pool
+	Queue *queue.Client
 }
 
 // ListAnalyses returns analysis runs, newest first.
@@ -459,4 +461,24 @@ overwriting the previous run's comment.
 */
 func commentTag(runID int64) string {
 	return fmt.Sprintf("<!-- ai-review-run:%d -->", runID)
+}
+
+// ListDeadJobs returns up to 50 permanently-failed jobs from the Redis
+// dead-letter queue, newest first. Non-destructive: jobs stay in the DLQ
+// until explicitly replayed or cleared. Backs the /dead-jobs dashboard page.
+func (h *Handlers) ListDeadJobs(w http.ResponseWriter, r *http.Request) {
+	jobs, err := h.Queue.DeadJobs(r.Context(), 50)
+	if err != nil {
+		http.Error(w, "failed to read dead-letter queue", http.StatusInternalServerError)
+		return
+	}
+	// Each element is a JSON blob the worker pushed. Wrap them as RawMessage so
+	// the response is a JSON array of objects (not an array of escaped strings),
+	// which is what the dashboard's DeadJob[] type expects.
+	raw := make([]json.RawMessage, len(jobs))
+	for i, j := range jobs {
+		raw[i] = json.RawMessage(j)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(raw)
 }

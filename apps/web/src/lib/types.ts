@@ -151,3 +151,12 @@ export type ReviewSettings = {
   ai_verbosity: number; // 1..3
   ai_strictness: number; // 1..4
 };
+
+// GET /api/dead-jobs  (permanently-failed jobs parked in the Redis DLQ)
+export type DeadJob = {
+  run_id: number;
+  repo_full_name: string;
+  pr_number: number;
+  error: string;
+  failed_at: number; // Unix seconds (from Python time.time())
+};

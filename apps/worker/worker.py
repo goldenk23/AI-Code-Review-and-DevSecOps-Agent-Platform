@@ -1070,7 +1070,22 @@ def process_job_with_retry(job_data, max_retries=3):
                 print(f"Retrying in {wait_time} seconds...")
                 time.sleep(wait_time)
             else:
-                print(f"Job permanently failed after {max_retries} attempts -- leaving run as 'failed'")
+                print(f"Job permanently failed after {max_retries} attempts -- pushing to dead-letter queue")
+                # Park the job on a second Redis list instead of losing it, so
+                # it can be inspected/replayed later. We attach the last error
+                # so the dashboard can show why it died. A DLQ push failure must
+                # never crash the worker -- log it and move on.
+                dead_payload = {
+                    "run_id": job_data.get("run_id"),
+                    "repo_full_name": job_data.get("repo_full_name"),
+                    "pr_number": job_data.get("pr_number"),
+                    "error": str(e),
+                    "failed_at": time.time(),
+                }
+                try:
+                    get_redis_connection().lpush("ai_review_jobs_dead", json.dumps(dead_payload))
+                except Exception as dlq_err:
+                    print(f"Failed to push to dead-letter queue: {dlq_err}")
 
 
 # Standard Python idiom: "if this file was run directly (python worker.py),
