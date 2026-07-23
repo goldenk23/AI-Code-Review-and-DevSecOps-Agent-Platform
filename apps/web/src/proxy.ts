@@ -48,6 +48,20 @@ export function proxy(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
+  // For dashboard->API calls that Next rewrites to the Go API, inject the
+  // shared API key server-side. The browser never sees it (this runs on the
+  // server), and the Go API rejects any /api request without it -- so hitting
+  // the API host directly, bypassing this proxy, fails. Setting it via
+  // `request.headers` propagates the header upstream to the rewrite target.
+  if (pathname.startsWith("/api/")) {
+    const apiKey = process.env.API_KEY;
+    if (apiKey) {
+      const headers = new Headers(request.headers);
+      headers.set("x-api-key", apiKey);
+      return NextResponse.next({ request: { headers } });
+    }
+  }
+
   return NextResponse.next();
 }
 

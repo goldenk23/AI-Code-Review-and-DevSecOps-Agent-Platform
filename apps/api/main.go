@@ -22,11 +22,19 @@ import (
 
 // corsMiddleware adds CORS headers so the browser (localhost:3000) can call
 // this API (localhost:8080) without being blocked by the same-origin policy.
+// The allowed origin is a single configurable value (NOT "*") -- the dashboard
+// is the only browser client, so we lock it down. Override with
+// CORS_ALLOWED_ORIGIN in other environments.
 func corsMiddleware(next http.Handler) http.Handler {
+	allowedOrigin := os.Getenv("CORS_ALLOWED_ORIGIN")
+	if allowedOrigin == "" {
+		allowedOrigin = "http://localhost:3000"
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+		w.Header().Set("Vary", "Origin")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
 			return
@@ -149,6 +157,10 @@ func main() {
 
 	// Api routes
 	r.Route("/api", func(r chi.Router) {
+		// Require the shared API key on every /api route. The dashboard's
+		// Next proxy injects it server-side; direct external calls are rejected.
+		r.Use(api.RequireAPIKey)
+
 		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 			w.Write([]byte(`{"service":"ai-review-api","version":"0.1.0"}`))
 		})

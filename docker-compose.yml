@@ -78,6 +78,11 @@ services:
       REDIS_URL: redis://redis:6379/0
       REDIS_ADDR: redis:6379
       PORT: "8080"
+      # Shared API key protecting /api. Defaults so the api and web containers
+      # get the SAME value; override by exporting API_KEY before compose up.
+      API_KEY: ${API_KEY:-dev-local-api-key}
+      # Only the dashboard origin may call the API from a browser.
+      CORS_ALLOWED_ORIGIN: http://localhost:3000
       # env_file below still provides GITHUB_* and TOKEN_ENCRYPTION_KEY;
       # `environment` wins over env_file on conflicts, which is what we want
       # for the URLs above (the .env files point at localhost for local dev).
@@ -118,6 +123,9 @@ services:
       # target the API by its service name (see apps/web/next.config.ts).
       # The browser still only talks to localhost:3000 — no CORS change.
       API_INTERNAL_URL: http://api:8080
+      # Same shared key the api expects; the Next proxy injects it on /api/*.
+      # Default matches the api service so they line up out of the box.
+      API_KEY: ${API_KEY:-dev-local-api-key}
     depends_on: [api]
 
 volumes:
