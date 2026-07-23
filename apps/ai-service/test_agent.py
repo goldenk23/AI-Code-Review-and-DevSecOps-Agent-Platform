@@ -38,3 +38,23 @@ def test_parse_empty_response():
 def test_parse_garbage_returns_empty():
     """Unparseable text -> empty list, not an exception."""
     assert AgentLoop._parse_findings("not json at all") == []
+
+
+def test_parse_fence_without_language_tag():
+    """Model wrapped JSON in bare ``` fences (no 'json' tag)."""
+    resp = "```\n[{\"title\": \"z\"}]\n```"
+    out = AgentLoop._parse_findings(resp)
+    assert len(out) == 1
+    assert out[0]["title"] == "z"
+
+
+def test_parse_object_not_list_returns_empty():
+    """A JSON object (not an array) isn't a findings list -> []."""
+    assert AgentLoop._parse_findings('{"title": "x"}') == []
+
+
+def test_parse_multiple_findings_preserved_in_order():
+    """Every finding in the array comes back, in order."""
+    resp = '[{"title": "a"}, {"title": "b"}, {"title": "c"}]'
+    out = AgentLoop._parse_findings(resp)
+    assert [f["title"] for f in out] == ["a", "b", "c"]
