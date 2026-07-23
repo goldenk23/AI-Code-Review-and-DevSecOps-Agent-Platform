@@ -111,17 +111,17 @@ func GetUser(ctx context.Context, accessToken string) (*GitHubUser, error) {
 	req.Header.Set("Authorization", "Bearer "+accessToken)  // GitHub expects the access token in the Authorization header.
 	req.Header.Set("Accept", "application/vnd.github+json") //GitHub's API versioning. This header tells GitHub we want the latest version of the API.
 
-	resp, err := http.DefaultClient.Do(req)// Sends the request to GitHub's API and gets the response.
+	resp, err := http.DefaultClient.Do(req) // Sends the request to GitHub's API and gets the response.
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close() //Closes the response when the function ends.
 
-   /**
-   io.ReadAll() takes the data from GitHub's response and stores it in your computer's RAM (temporary memory) so your program can work with it.
-	Once stored in RAM, you can search, parse, or use the data however you want.
-   */
-	body, err := io.ReadAll(resp.Body)// Reads the entire response body into memory. This is safe because GitHub's user API response is small.
+	/**
+	   io.ReadAll() takes the data from GitHub's response and stores it in your computer's RAM (temporary memory) so your program can work with it.
+		Once stored in RAM, you can search, parse, or use the data however you want.
+	*/
+	body, err := io.ReadAll(resp.Body) // Reads the entire response body into memory. This is safe because GitHub's user API response is small.
 	if err != nil {
 		return nil, err
 	}
@@ -141,4 +141,62 @@ func GetUser(ctx context.Context, accessToken string) (*GitHubUser, error) {
 		return nil, fmt.Errorf("GitHub returned an incomplete user profile: %+v", user)
 	}
 	return &user, nil
+}
+
+type GitHubRepository struct {
+	ID       int64  `json:"id"`
+	FullName string `json:"full_name"`
+	Owner    struct {
+		Login string `json:"login"`
+	} `json:"owner"`
+}
+
+// GetRepositories returns repositories the authenticated user can access.
+// Following GitHub's Link header keeps the mapping correct for accounts with
+// more than one page of repositories.
+func GetRepositories(ctx context.Context, accessToken string) ([]GitHubRepository, error) {
+	nextURL := "https://api.github.com/user/repos?per_page=100&affiliation=owner,collaborator,organization_member"
+	var repositories []GitHubRepository
+	for page := 0; nextURL != ""; page++ {
+		if page >= 100 {
+			return nil, fmt.Errorf("GitHub repository pagination exceeded 100 pages")
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, nextURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+accessToken)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("GitHub /user/repos returned HTTP %d: %s", resp.StatusCode, string(body))
+		}
+		var pageRepositories []GitHubRepository
+		if err := json.Unmarshal(body, &pageRepositories); err != nil {
+			return nil, fmt.Errorf("failed to parse repositories response: %w", err)
+		}
+		repositories = append(repositories, pageRepositories...)
+		nextURL = githubNextLink(resp.Header.Get("Link"))
+	}
+	return repositories, nil
+}
+
+func githubNextLink(linkHeader string) string {
+	for _, link := range strings.Split(linkHeader, ",") {
+		parts := strings.Split(link, ";")
+		if len(parts) < 2 || strings.TrimSpace(parts[1]) != `rel="next"` {
+			continue
+		}
+		return strings.Trim(strings.TrimSpace(parts[0]), "<>")
+	}
+	return ""
 }

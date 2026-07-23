@@ -82,6 +82,7 @@ services:
       # Shared API key protecting /api. Defaults so the api and web containers
       # get the SAME value; override by exporting API_KEY before compose up.
       API_KEY: ${API_KEY:-dev-local-api-key}
+      SESSION_SECRET: ${SESSION_SECRET:-dev-local-session-secret-change-me}
       # Only the dashboard origin may call the API from a browser.
       CORS_ALLOWED_ORIGIN: http://localhost:3000
       # env_file below still provides GITHUB_* and TOKEN_ENCRYPTION_KEY;
@@ -129,6 +130,7 @@ services:
       # Same shared key the api expects; the Next proxy injects it on /api/*.
       # Default matches the api service so they line up out of the box.
       API_KEY: ${API_KEY:-dev-local-api-key}
+      SESSION_SECRET: ${SESSION_SECRET:-dev-local-session-secret-change-me}
     depends_on: [api]
 
 volumes:

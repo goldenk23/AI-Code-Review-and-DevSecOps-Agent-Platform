@@ -164,6 +164,8 @@ func main() {
 	// Auth routes
 	r.Get("/auth/github", authHandler.LoginHandler)
 	r.Get("/auth/github/callback", authHandler.CallbackHandler)
+	r.Get("/auth/session", authHandler.SessionHandler)
+	r.Post("/auth/logout", authHandler.LogoutHandler)
 
 	// Api routes
 	r.Route("/api", func(r chi.Router) {
@@ -220,6 +222,13 @@ func main() {
 		// Dead-letter queue -- jobs that permanently failed (all retries
 		// exhausted) and were parked in Redis for inspection/replay.
 		r.Get("/dead-jobs", apiHandlers.ListDeadJobs)
+	})
+
+	// Worker-only endpoints are intentionally outside the browser-facing /api
+	// rewrite. They still require the shared service key.
+	r.Route("/internal", func(r chi.Router) {
+		r.Use(api.RequireAPIKey)
+		r.Get("/analyses/{id}/github-token", apiHandlers.GetAnalysisGitHubToken)
 	})
 
 	r.Post("/webhooks/github", webhookHandler.HandleGitHubWebhook)

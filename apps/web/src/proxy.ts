@@ -1,10 +1,9 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-// Server-side gate. Reads the `cp-authed` cookie (set by the OAuth callback
-// page after a successful GitHub login) and redirects:
-//   - unauthenticated users hitting a protected route -> /login
-//   - authenticated users hitting /login                -> /
+// Server-side gate. Verifies the API-issued `cp-session` HMAC and expiry before
+// protected routes render. Invalid sessions go to /login; valid sessions skip it.
 //
 // Why proxy.ts and not a client `useEffect` redirect: proxy runs on the edge
 // before any HTML is sent, so there's NO flash of unstyled dashboard content
@@ -18,13 +17,35 @@ import type { NextRequest } from "next/server";
 
 // Routes that should ALWAYS be reachable regardless of auth state.
 //
-// `/api/auth/exchange` MUST be here: the OAuth callback page (which has no
-// `cp-authed` cookie yet, since the cookie is set only AFTER a successful
-// exchange) fetches this endpoint to trade the one-time GitHub code for our
-// session cookie. If it isn't public, proxy.ts 307s the fetch to /login, the
-// fetch follows the redirect, gets back the login page HTML, JSON.parse throws,
-// and the user sees "Retrieving user context... FAILED" instead of logging in.
-const PUBLIC_PATHS = ["/login", "/auth/github", "/auth/github/callback", "/api/auth/exchange"];
+// `/api/auth/exchange` must stay public: it trades the one-time GitHub code and
+// state cookie for the signed HttpOnly session. Session status/logout validate
+// or clear that cookie themselves.
+const PUBLIC_PATHS = [
+  "/login",
+  "/auth/github",
+  "/auth/github/callback",
+  "/api/auth/exchange",
+  "/api/auth/session",
+  "/api/auth/logout",
+];
+
+type SessionClaims = { uid: number; username: string; exp: number };
+
+function hasValidSession(token: string | undefined): boolean {
+  const secret = process.env.SESSION_SECRET;
+  if (!token || !secret || secret.length < 32) return false;
+  try {
+    const [payload, signature, extra] = token.split(".");
+    if (!payload || !signature || extra) return false;
+    const actual = Buffer.from(signature, "base64url");
+    const expected = createHmac("sha256", secret).update(payload).digest();
+    if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return false;
+    const claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as SessionClaims;
+    return Number.isInteger(claims.uid) && claims.uid > 0 && Boolean(claims.username) && claims.exp > Date.now() / 1000;
+  } catch {
+    return false;
+  }
+}
 
 function isPublic(pathname: string): boolean {
   return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"));
@@ -32,7 +53,7 @@ function isPublic(pathname: string): boolean {
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  const authed = request.cookies.get("cp-authed")?.value === "1";
+  const authed = hasValidSession(request.cookies.get("cp-session")?.value);
 
   // Authenticated user trying to visit /login -> bounce them to the dashboard.
   if (authed && pathname === "/login") {

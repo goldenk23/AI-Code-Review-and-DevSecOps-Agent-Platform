@@ -88,3 +88,12 @@ def test_post_comments_uses_configured_api_and_key(monkeypatch):
     assert captured["url"] == "https://api.internal/api/analyses/42/post-comments"
     assert captured["headers"] == {"X-API-Key": "secret"}
     assert captured["checked"] is True
+
+
+
+def test_git_clone_environment_uses_transient_header(monkeypatch):
+    monkeypatch.delenv("GIT_CONFIG_COUNT", raising=False)
+    env = worker.git_clone_environment("github-token")
+    assert env["GIT_CONFIG_KEY_0"] == "http.extraHeader"
+    assert env["GIT_CONFIG_VALUE_0"] == "Authorization: Bearer github-token"
+    assert os.environ.get("GIT_CONFIG_COUNT") is None

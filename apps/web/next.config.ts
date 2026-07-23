@@ -27,6 +27,8 @@ const nextConfig: NextConfig = {
       // so a more specific rule placed after the catch-all is silently shadowed
       // (the request gets forwarded to /api/auth/exchange on Go, which 404s).
       { source: "/api/auth/exchange", destination: `${apiInternalUrl}/auth/github/callback` },
+      { source: "/api/auth/session", destination: `${apiInternalUrl}/auth/session` },
+      { source: "/api/auth/logout", destination: `${apiInternalUrl}/auth/logout` },
       { source: "/api/:path*", destination: `${apiInternalUrl}/api/:path*` },
       // Login kickoff -- Go 302s the browser to GitHub.
       { source: "/auth/github", destination: `${apiInternalUrl}/auth/github` },

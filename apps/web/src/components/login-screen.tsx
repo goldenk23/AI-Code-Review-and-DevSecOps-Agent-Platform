@@ -11,7 +11,7 @@ import { GithubIcon, TerminalIcon } from "@/components/icons";
 //   - "Sign in with GitHub" -> <a href="/auth/github"> (proxied to Go's OAuth
 //     kickoff by next.config.ts rewrites). The browser follows the 302 to
 //     GitHub. After authorizing, GitHub redirects to /auth/github/callback,
-//     which sets the `cp-authed` cookie and bounces back to ?next= or /.
+//     where the API validates state and sets a signed HttpOnly session.
 //   - "ACCESS TOKEN" + "Authenticate via CLI" -> visual only. The backend has
 //     no token-based auth endpoint, so these controls render but don't fire.
 //     (They're not even buttons in the failed sense -- they're disabled, with

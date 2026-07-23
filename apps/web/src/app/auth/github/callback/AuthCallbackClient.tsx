@@ -6,16 +6,9 @@ import { AppShell } from "@/components/app-shell";
 import { Card } from "@/components/ui/card";
 import { CheckCircleIcon, ArrowForwardIcon, TerminalIcon } from "@/components/icons";
 
-// After GitHub authorizes the user, GitHub redirects the browser here with
-// ?code=... We call /api/auth/exchange (proxied to Go's /auth/github/callback);
-// Go exchanges the code with GitHub, upserts the user, and returns
-// {message:"Login successful", username:"octocat"}. On success we then:
-//   1. set the `cp-authed=1` cookie so proxy.ts lets subsequent requests
-//      through to the dashboard routes
-//   2. auto-redirect to / after ~1.5s so the user lands on the dashboard
-//      without needing to click "Go to Dashboard"
-// We also still render the Stitch-style terminal card so a no-JS user (or a
-// slow connection) sees something sensible.
+// Go validates the OAuth state, exchanges the code, syncs repository access,
+// sets the signed HttpOnly session, and returns the username. On success this
+// page redirects to the dashboard after a short confirmation.
 
 // After GitHub authorizes the user, GitHub redirects the browser to whatever
 // `GITHUB_CALLBACK_URL` was set to on the Go API. For this Next page to render,
@@ -29,11 +22,11 @@ import { CheckCircleIcon, ArrowForwardIcon, TerminalIcon } from "@/components/ic
 // The visual treatment matches the Stitch auth design: a terminal-feel card on
 // a subtle grid background with soft indigo orbs, a status header, and a mock
 // terminal output block that ticks through the OAuth exchange steps.
-export function AuthCallbackClient({ code, nextPath }: { code: string; nextPath: string }) {
-  const initialError = code ? null : "Missing 'code' parameter -- did you reach this page directly?";
+export function AuthCallbackClient({ code, state, nextPath }: { code: string; state: string; nextPath: string }) {
+  const initialError = code && state ? null : "Missing OAuth code or state -- restart sign-in from the login page.";
   const [username, setUsername] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(initialError);
-  const [pending, setPending] = useState(code !== "");
+  const [pending, setPending] = useState(code !== "" && state !== "");
   const router = useRouter();
 
   // GitHub OAuth codes are SINGLE-USE. In React StrictMode (Next dev), effects
@@ -43,10 +36,10 @@ export function AuthCallbackClient({ code, nextPath }: { code: string; nextPath:
   const exchangedRef = useRef(false);
 
   useEffect(() => {
-    if (!code || exchangedRef.current) return;
+    if (!code || !state || exchangedRef.current) return;
     exchangedRef.current = true;
     let cancelled = false;
-    fetch(`/api/auth/exchange?code=${encodeURIComponent(code)}`, {
+    fetch(`/api/auth/exchange?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`, {
       headers: { Accept: "application/json" },
     })
       .then(async (res) => {
@@ -59,10 +52,6 @@ export function AuthCallbackClient({ code, nextPath }: { code: string; nextPath:
             return;
           }
           setUsername(data.username ?? "unknown");
-          // Hard gate: set the auth cookie so proxy.ts stops bouncing us.
-          // max-age 1 year; SameSite=Lax so the OAuth top-level redirect works
-          // and the cookie is sent on same-site navigations only.
-          document.cookie = "cp-authed=1; path=/; max-age=31536000; SameSite=Lax";
         } catch {
           setError(text || `Login failed (HTTP ${res.status})`);
         }
@@ -76,7 +65,7 @@ export function AuthCallbackClient({ code, nextPath }: { code: string; nextPath:
     return () => {
       cancelled = true;
     };
-  }, [code]);
+  }, [code, state]);
 
   // Auto-redirect to the dashboard ~1.5s after we've confirmed success.
   // The visible terminal card stays in place as a fallback for slow/no-JS.

@@ -11,5 +11,6 @@ export default async function AuthCallbackPage({
 }) {
   const sp = await searchParams;
   const code = typeof sp.code === "string" ? sp.code : "";
-  return <AuthCallbackClient code={code} nextPath="/" />;
+  const state = typeof sp.state === "string" ? sp.state : "";
+  return <AuthCallbackClient code={code} state={state} nextPath="/" />;
 }

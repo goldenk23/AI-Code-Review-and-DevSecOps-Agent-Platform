@@ -165,6 +165,32 @@ def post_comments(run_id):
     response.raise_for_status()
 
 
+def get_github_token(run_id):
+    """Return the OAuth token mapped to this run's repository, if one exists."""
+    base_url = os.getenv("API_BASE_URL", "http://localhost:8080").rstrip("/")
+    response = httpx.get(
+        f"{base_url}/internal/analyses/{run_id}/github-token",
+        headers=api_headers(),
+        timeout=10,
+    )
+    if response.status_code == 204:
+        return None
+    response.raise_for_status()
+    return response.json().get("token")
+
+
+def git_clone_environment(token):
+    """Use Git's transient config environment so credentials never enter URLs."""
+    env = os.environ.copy()
+    if token:
+        env.update({
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "http.extraHeader",
+            "GIT_CONFIG_VALUE_0": f"Authorization: Bearer {token}",
+        })
+    return env
+
+
 def process_job(job_data):
     """
     Process a single analysis job end-to-end.
@@ -239,9 +265,18 @@ def process_job(job_data):
         # as if typed in a terminal, capture its stdout/stderr as text, and
         # give up after 60 seconds. `returncode` is 0 on success, non-zero
         # on failure (e.g. repo not found, network down).
+        github_token = None
+        try:
+            github_token = get_github_token(run_id)
+        except Exception as token_error:
+            # Public repositories can still clone anonymously. A private clone
+            # will fail clearly below and be retried by the normal job wrapper.
+            print(f"Could not load repository token for run #{run_id}: {token_error}")
+
         clone_result = subprocess.run(
             ["git", "clone", f"https://github.com/{repo_full_name}.git", workspace],
-            capture_output=True, text=True, timeout=60
+            capture_output=True, text=True, timeout=60,
+            env=git_clone_environment(github_token),
         )
         if clone_result.returncode != 0:
             # Raising here jumps to the `except Exception` block below, which

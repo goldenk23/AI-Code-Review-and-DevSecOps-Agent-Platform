@@ -5,7 +5,9 @@ This file create Api endpoints to check job status, and minimal Next.js dashboar
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -16,6 +18,7 @@ import (
 	"github.com/goldenk23/ai-devsecops-reviewer/api/internal/auth"
 	"github.com/goldenk23/ai-devsecops-reviewer/api/internal/github"
 	"github.com/goldenk23/ai-devsecops-reviewer/api/internal/queue"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -192,6 +195,45 @@ func (h *Handlers) GetAnalysisFindings(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(findings)
 }
 
+func (h *Handlers) githubTokenForRun(ctx context.Context, runID int64) (string, error) {
+	var encryptedToken string
+	err := h.DB.QueryRow(ctx, `
+		SELECT u.oauth_token_encrypted
+		FROM analysis_runs ar
+		JOIN repository_users ru ON ru.repo_id = ar.repo_id
+		JOIN users u ON u.id = ru.user_id
+		WHERE ar.id = $1
+		ORDER BY ru.linked_at DESC
+		LIMIT 1
+	`, runID).Scan(&encryptedToken)
+	if err != nil {
+		return "", err
+	}
+	return auth.DecryptToken(encryptedToken)
+}
+
+// GetAnalysisGitHubToken supplies the worker with the token linked to this
+// run's repository. The route is internal and protected by the service API key.
+func (h *Handlers) GetAnalysisGitHubToken(w http.ResponseWriter, r *http.Request) {
+	runID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	token, err := h.githubTokenForRun(r.Context(), runID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err != nil {
+		http.Error(w, "failed to load repository token", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(map[string]string{"token": token})
+}
+
 /*
 *
 PostComments posts a summary of the analysis findings as a comment on the
@@ -267,16 +309,9 @@ func (h *Handlers) PostComments(w http.ResponseWriter, r *http.Request) {
 
 	tag := commentTag(runID)
 
-	var encToken string
-	err = h.DB.QueryRow(ctx, "SELECT oauth_token_encrypted FROM users LIMIT 1").Scan(&encToken)
+	token, err := h.githubTokenForRun(ctx, runID)
 	if err != nil {
-		http.Error(w, "no user token available", http.StatusInternalServerError)
-		return
-	}
-	// Decrypt the stored token before using it to call GitHub.
-	token, err := auth.DecryptToken(encToken)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("failed to decrypt stored token: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("no repository token available: %v", err), http.StatusInternalServerError)
 		return
 	}
 

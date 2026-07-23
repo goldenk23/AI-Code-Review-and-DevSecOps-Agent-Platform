@@ -156,23 +156,16 @@ if (-not $pgReady) { throw "Postgres did not become ready in 30s" }
 Write-OK "Postgres ready"
 
 # -----------------------------------------------------------------------------
-# Step 3: apply migrations 001..006 IF they haven't been already.
-# We use the presence of the `findings` table (created last by 006) as the
-# "migrations already applied" marker. Cheap and good enough for dev.
+# Step 3: apply every idempotent migration in filename order. This keeps local
+# dev aligned with deploys when new migrations are added after the core tables.
 # -----------------------------------------------------------------------------
-$already = docker exec ai-review-postgres psql -U review -d ai_review -tAc `
-    "SELECT to_regclass('public.findings');" 2>$null
-if ($already -ne "") {
-    Write-OK "Migrations already applied (findings table exists)"
-} else {
-    Write-Step "Applying migrations 001..006"
-    Get-ChildItem "apps/api/migrations" -Filter "*.sql" | Sort-Object Name | ForEach-Object {
-        Write-Host "    applying $($_.Name)"
-        Get-Content $_.FullName -Raw | docker exec -i ai-review-postgres psql -U review -d ai_review -q
-        if ($LASTEXITCODE -ne 0) { throw "migration $($_.Name) failed" }
-    }
-    Write-OK "Migrations applied"
+Write-Step "Applying database migrations"
+Get-ChildItem "apps/api/migrations" -Filter "*.sql" | Sort-Object Name | ForEach-Object {
+    Write-Host "    applying $($_.Name)"
+    Get-Content $_.FullName -Raw | docker exec -i ai-review-postgres psql -U review -d ai_review -q -v ON_ERROR_STOP=1
+    if ($LASTEXITCODE -ne 0) { throw "migration $($_.Name) failed" }
 }
+Write-OK "Migrations applied"
 
 # -----------------------------------------------------------------------------
 # Step 4: make sure GITHUB_CALLBACK_URL is in apps/api/.env. The OAuth flow
@@ -190,10 +183,13 @@ if (-not $hasCb) {
 }
 
 # The API loads apps/api/.env itself, but the worker and Next server are child
-# processes and also need the shared key for authenticated /api calls.
-$apiKeyLine = Get-Content $apiEnv | Where-Object { $_ -match "^API_KEY=" } | Select-Object -First 1
-if ($apiKeyLine) {
-    $env:API_KEY = ($apiKeyLine -split "=", 2)[1].Trim()
+# processes and also need shared service/session secrets.
+foreach ($name in @("API_KEY", "SESSION_SECRET")) {
+    $line = Get-Content $apiEnv | Where-Object { $_ -match "^$name=" } | Select-Object -First 1
+    if ($line) { Set-Item -Path "env:$name" -Value (($line -split "=", 2)[1].Trim()) }
+}
+if (-not $env:SESSION_SECRET) {
+    $env:SESSION_SECRET = "dev-local-session-secret-change-me"
 }
 
 # Load AI service env vars (for AI_SERVICE_WORKERS)
