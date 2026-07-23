@@ -93,6 +93,10 @@ services:
     env_file: ./apps/ai-service/.env
     depends_on: [api]
 
+  # Scale out with more workers: `docker compose up -d --scale worker=3`.
+  # The LPUSH/BRPOP queue lets N workers share the queue safely -- no code
+  # change needed. Remove `container_name` below first: fixed names stop
+  # Compose from starting replicas.
   worker:
     build: ./apps/worker
     container_name: ai-review-worker

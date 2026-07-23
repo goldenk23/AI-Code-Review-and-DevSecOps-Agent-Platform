@@ -43,3 +43,26 @@ retries, patch verification, and deployment.
 
 See `AGENTS.md` (repo root) for the authoritative short summary of
 commands, gotchas, and layout.
+
+## Scaling the worker
+
+The job queue is a Redis list (`LPUSH` from the API, `BRPOP` from the workers),
+so N worker processes consume the same queue safely — no code changes needed.
+Each job is popped by exactly one worker, so nothing is processed twice.
+
+Run 3 workers locally (each in its own terminal). Give each a distinct
+`WORKER_ID` (log prefix) and `METRICS_PORT` — two workers on the same metrics
+port means all but the first lose their `/metrics` endpoint:
+
+    cd apps/worker
+    python worker.py                                            # worker-1 (:9090)
+    $env:WORKER_ID=2; $env:METRICS_PORT=9091; python worker.py  # worker-2
+    $env:WORKER_ID=3; $env:METRICS_PORT=9092; python worker.py  # worker-3
+
+Logs are prefixed `[worker-N]` so you can see each process pull jobs.
+
+In Docker, scale with Compose instead: `docker compose up -d --scale worker=3`
+(remove the worker's `container_name` first — fixed names prevent replicas).
+
+Measure the speedup with `.\benchmark.ps1 -Only e2e` (1 worker) vs the same
+run with 3 workers.

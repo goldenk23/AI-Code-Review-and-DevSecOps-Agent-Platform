@@ -125,6 +125,12 @@ except OSError as e:
     print(f"Could not bind metrics server on :{METRICS_PORT} ({e}); metrics disabled for this process")
 
 
+# Short identifier for THIS worker process, used to prefix log lines so output
+# from multiple workers sharing the queue is distinguishable. Defaults to "1";
+# set WORKER_ID=2, =3, ... when running extra workers.
+WORKER_ID = os.getenv("WORKER_ID", "1")
+
+
 def get_db_connection():
     """Open a fresh connection to Postgres using the DATABASE_URL env var.
 
@@ -996,7 +1002,7 @@ def main():
     loop) all BRPOP-ing the same queue.
     """
     redis_conn = get_redis_connection()
-    print("Worker started. Waiting for jobs on Redis queue 'ai_review_jobs'...")
+    print(f"[worker-{WORKER_ID}] started. Waiting for jobs on Redis queue 'ai_review_jobs'...")
     while True:
         # BRPOP = "Blocking Right POP". It pulls the rightmost item from the
         # list `ai_review_jobs`. The "B" is the important part: instead of
