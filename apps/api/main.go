@@ -92,6 +92,9 @@ func main() {
 		// Not fatal -- many deployments inject env vars directly.
 		logger.Info("no .env file found, relying on process environment")
 	}
+	if err := validateDeploymentConfig(); err != nil {
+		logger.Fatal("invalid deployment configuration", zap.Error(err))
+	}
 
 	port := os.Getenv("PORT")
 	if port == "" {

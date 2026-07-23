@@ -16,9 +16,10 @@
 #   docker compose down              # stop everything (database data SURVIVES)
 #   docker compose down -v           # stop everything AND wipe the database
 #
-#   First run only -- apply the DB migrations into the postgres container:
-#     Get-Content apps/api/migrations/NNN_*.sql | docker exec -i ai-review-postgres psql -U review -d ai_review
-#     (run each file 001..006 in order; or just use .\start.ps1 once, which does it)
+#   Production HTTPS:
+#     Copy deploy.env.example to .env, fill secrets, then run:
+#     docker compose --profile production up -d --build
+#   The one-shot migrate service applies all SQL files before API/workers start.
 #
 # ── THIS FILE VS start.ps1 (pick ONE, they fight over ports 3000/8080/8000) ──
 #
@@ -47,9 +48,9 @@ services:
     container_name: ai-review-postgres
     environment:
       POSTGRES_USER: review
-      POSTGRES_PASSWORD: reviewpass
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-reviewpass}
       POSTGRES_DB: ai_review
-    ports: ["5432:5432"]
+    ports: ["127.0.0.1:5432:5432"]
     volumes: [postgres_data:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U review"]
@@ -60,7 +61,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: ai-review-redis
-    ports: ["6379:6379"]
+    ports: ["127.0.0.1:6379:6379"]
     volumes: [redis_data:/data]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -68,71 +69,127 @@ services:
       timeout: 5s
       retries: 5
 
+  migrate:
+    image: postgres:16-alpine
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgres://review:reviewpass@postgres:5432/ai_review}
+    volumes:
+      - ./apps/api/migrations:/migrations:ro
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        for file in /migrations/*.sql; do
+          echo "Applying $${file}"
+          psql "$${DATABASE_URL}" -v ON_ERROR_STOP=1 -f "$${file}"
+        done
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
   api:
     build: ./apps/api
     container_name: ai-review-api
-    ports: ["8080:8080"]
+    ports: ["127.0.0.1:8080:8080"]
     environment:
       # Service names, not localhost — containers reach each other by name.
-      DATABASE_URL: postgres://review:reviewpass@postgres:5432/ai_review
-      REDIS_URL: redis://redis:6379/0
-      REDIS_ADDR: redis:6379
-      WORKER_METRICS_URL: http://worker:9090/metrics
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DATABASE_URL: ${DATABASE_URL:-postgres://review:reviewpass@postgres:5432/ai_review}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      REDIS_ADDR: ${REDIS_ADDR:-redis:6379}
+      WORKER_METRICS_URL: ${WORKER_METRICS_URL:-http://worker:9090/metrics}
       PORT: "8080"
+      GITHUB_CALLBACK_URL: ${GITHUB_CALLBACK_URL:-http://localhost:3000/auth/github/callback}
       # Shared API key protecting /api. Defaults so the api and web containers
       # get the SAME value; override by exporting API_KEY before compose up.
       API_KEY: ${API_KEY:-dev-local-api-key}
       SESSION_SECRET: ${SESSION_SECRET:-dev-local-session-secret-change-me}
       # Only the dashboard origin may call the API from a browser.
-      CORS_ALLOWED_ORIGIN: http://localhost:3000
+      CORS_ALLOWED_ORIGIN: ${APP_ORIGIN:-http://localhost:3000}
       # env_file below still provides GITHUB_* and TOKEN_ENCRYPTION_KEY;
       # `environment` wins over env_file on conflicts, which is what we want
       # for the URLs above (the .env files point at localhost for local dev).
     env_file: ./apps/api/.env
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
     depends_on:
-      postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
 
   ai-service:
     build: ./apps/ai-service
     container_name: ai-review-ai-service
-    ports: ["8000:8000"]
+    ports: ["127.0.0.1:8000:8000"]
     env_file: ./apps/ai-service/.env
-    depends_on: [api]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    depends_on:
+      api: { condition: service_healthy }
 
-  # Scale out with more workers: `docker compose up -d --scale worker=3`.
-  # The LPUSH/BRPOP queue lets N workers share the queue safely -- no code
-  # change needed. Remove `container_name` below first: fixed names stop
-  # Compose from starting replicas.
+  # Scale out with: `docker compose up -d --scale worker=3`.
   worker:
     build: ./apps/worker
-    container_name: ai-review-worker
     environment:
-      DATABASE_URL: postgres://review:reviewpass@postgres:5432/ai_review
-      REDIS_URL: redis://redis:6379/0
-      AI_SERVICE_URL: http://ai-service:8000
-      API_BASE_URL: http://api:8080
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DATABASE_URL: ${DATABASE_URL:-postgres://review:reviewpass@postgres:5432/ai_review}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      AI_SERVICE_URL: ${AI_SERVICE_URL:-http://ai-service:8000}
+      API_BASE_URL: ${API_BASE_URL:-http://api:8080}
       API_KEY: ${API_KEY:-dev-local-api-key}
+    expose: ["9090"]
     env_file: ./apps/worker/.env
     depends_on:
-      postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
+      ai-service: { condition: service_healthy }
 
   web:
     build: ./apps/web
     container_name: ai-review-web
-    ports: ["3000:3000"]
+    ports: ["127.0.0.1:3000:3000"]
     environment:
       # Rewrites run server-side inside the Next container, so they must
       # target the API by its service name (see apps/web/next.config.ts).
       # The browser still only talks to localhost:3000 — no CORS change.
-      API_INTERNAL_URL: http://api:8080
+      API_INTERNAL_URL: ${API_INTERNAL_URL:-http://api:8080}
       # Same shared key the api expects; the Next proxy injects it on /api/*.
       # Default matches the api service so they line up out of the box.
       API_KEY: ${API_KEY:-dev-local-api-key}
       SESSION_SECRET: ${SESSION_SECRET:-dev-local-session-secret-change-me}
-    depends_on: [api]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/login').then(r=>{if(!r.ok)process.exit(1)})"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    depends_on:
+      api: { condition: service_healthy }
+
+  gateway:
+    image: caddy:2.10.0-alpine
+    profiles: ["production"]
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:-localhost}
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api: { condition: service_healthy }
+      web: { condition: service_healthy }
 
 volumes:
   postgres_data:
   redis_data:
+  caddy_data:
+  caddy_config:

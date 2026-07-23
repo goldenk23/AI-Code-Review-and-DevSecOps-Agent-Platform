@@ -7,6 +7,9 @@ from agent import AgentLoop
 
 load_dotenv()
 
+if not os.getenv("OPENCODE_GO_API_KEY"):
+    raise RuntimeError("OPENCODE_GO_API_KEY is required")
+
 app = FastAPI(title="AI Review Service", version="0.1.0")
 
 @app.get("/health")

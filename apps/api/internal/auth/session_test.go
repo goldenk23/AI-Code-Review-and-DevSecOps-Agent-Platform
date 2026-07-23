@@ -49,3 +49,11 @@ func TestSessionCookieIsSecureInProduction(t *testing.T) {
 		t.Fatalf("production session cookie must be HttpOnly and Secure: %+v", cookie)
 	}
 }
+
+func TestEncryptionKeyRequiredInProduction(t *testing.T) {
+	t.Setenv("ENVIRONMENT", "production")
+	t.Setenv("TOKEN_ENCRYPTION_KEY", "")
+	if _, err := EncryptToken("token"); err == nil {
+		t.Fatal("missing production encryption key was accepted")
+	}
+}

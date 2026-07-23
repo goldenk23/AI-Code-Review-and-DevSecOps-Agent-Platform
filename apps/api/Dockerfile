@@ -6,7 +6,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 # Copy source and build a static binary.
 COPY . .
-RUN CGO_ENABLED=0 go build -o /api main.go
+RUN CGO_ENABLED=0 go build -o /api .
 
 # ---- Run stage (tiny image, no Go toolchain) ----
 FROM alpine:3.20

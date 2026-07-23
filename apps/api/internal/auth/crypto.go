@@ -16,7 +16,9 @@ import (
 func encryptionKey() ([]byte, error) {
 	hexKey := os.Getenv("TOKEN_ENCRYPTION_KEY")
 	if hexKey == "" {
-		// 32 zero bytes — ONLY acceptable for local dev. Never for prod.
+		if environment := os.Getenv("ENVIRONMENT"); environment != "" && environment != "development" && environment != "test" {
+			return nil, errors.New("TOKEN_ENCRYPTION_KEY is required outside development/test")
+		}
 		return make([]byte, 32), nil
 	}
 	key, err := hex.DecodeString(hexKey)

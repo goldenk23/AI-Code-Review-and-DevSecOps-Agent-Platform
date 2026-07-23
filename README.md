@@ -80,6 +80,9 @@ docker compose up --build
 # web http://localhost:3000 · api http://localhost:8080/health · ai http://localhost:8000/docs
 ```
 
+See `docs/deployment.md` for the HTTPS production profile, required secrets,
+automatic migrations, multi-host environment variables, and worker scaling.
+
 See `AGENTS.md` and `docs/` for the deeper walkthrough, and `docs/README.md`
 for scaling the worker.
 

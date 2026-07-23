@@ -56,7 +56,7 @@ docker compose up -d
 
 # Terminal 2 — Go API on :8080
 cd apps/api
-go run main.go
+go run .
 
 # Terminal 3 — Python AI service on :8000
 cd apps/ai-service

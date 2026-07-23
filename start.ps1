@@ -266,7 +266,7 @@ function Launch($name, $workdir, $cmd) {
 Write-Step "Launching services"
 # Commands run under `cmd.exe /c`, so use cmd syntax (no PowerShell `&` call
 # operator). Quote paths that may contain spaces.
-Launch "api"        "$root\apps\api"        "go run main.go"
+Launch "api"        "$root\apps\api"        "go run ."
 $aiWorkers = if ($env:AI_SERVICE_WORKERS) { $env:AI_SERVICE_WORKERS } else { "1" }
 Launch "ai-service" "$root\apps\ai-service" """$root\apps\ai-service\.venv\Scripts\python.exe"" -m uvicorn main:app --port 8000 --workers $aiWorkers"
 Launch "worker"     "$root\apps\worker"     """$root\apps\worker\.venv\Scripts\python.exe"" worker.py"
