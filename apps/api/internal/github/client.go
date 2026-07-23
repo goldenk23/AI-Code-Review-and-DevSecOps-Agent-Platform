@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-/** 
+/**
 This is the phone. It has one part: HTTPClient, which is Go's built-in tool for making web requests.
 */
 type client struct {
@@ -51,14 +51,6 @@ func (c *client) GetPRDiff(ctx context.Context, owner, repo string, prNumber int
 	req.Header.Set("User-Agent", "AI-Code-Review-Bot")
 
 	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to perform request: %w", err)
-	}
-	defer resp.Body.Close()
-	/**
-	- c.HTTPClient.Do(req) → picks up the phone and dials. Sends the request, waits for the reply. Returns the response object (or an error if the network failed).
-	*/
-	resp, err = c.HTTPClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to perform request: %w", err)
 	}

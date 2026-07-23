@@ -16,16 +16,19 @@ import (
 //   - nullable columns scanned into *T pointers -> JSON null
 //   - empty list -> JSON null (the frontend's getList normalizes to [])
 //
-// `gradeForCounts` maps (critical, high, medium) counts to a letter grade
-// the way an org dashboard would: A=clean, B=negligible, C=action required.
+// gradeForCounts maps (critical, high, medium) counts to a letter grade:
+//
+//	A = clean (no critical/high/medium findings)
+//	B = action recommended (medium findings only)
+//	C = action required (any high or critical finding)
+//
+// Low/info findings are ignored — they're informational, not gate-worthy.
 // It's intentionally a simple rubric -- a real product would use weighted
 // formulas -- but it's deterministic and explains the intuition.
 func gradeForCounts(critical, high, medium int) string {
 	switch {
-	case critical > 0:
+	case critical > 0 || high > 0:
 		return "C"
-	case high > 0:
-		return "B"
 	case medium > 0:
 		return "B"
 	default:
@@ -91,17 +94,17 @@ func (h *Handlers) ListRepositories(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	type repoRow struct {
-		ID          int64
-		FullName    string
-		Owner       string
-		LastScanAt  *string
-		TotalPRs    int
-		TotalRuns   int
-		ActiveRuns  int
-		Critical    int
-		High        int
-		Medium      int
-		Low         int
+		ID         int64
+		FullName   string
+		Owner      string
+		LastScanAt *string
+		TotalPRs   int
+		TotalRuns  int
+		ActiveRuns int
+		Critical   int
+		High       int
+		Medium     int
+		Low        int
 	}
 	var items []repoRow
 	for rows.Next() {
@@ -120,19 +123,19 @@ func (h *Handlers) ListRepositories(w http.ResponseWriter, r *http.Request) {
 		grade := gradeForCounts(r.Critical, r.High, r.Medium)
 		scanning := r.ActiveRuns > 0
 		out = append(out, map[string]interface{}{
-			"id":            r.ID,
-			"full_name":     r.FullName,
-			"owner":         r.Owner,
-			"last_scan_at":  r.LastScanAt,
-			"total_runs":    r.TotalRuns,
-			"total_prs":     r.TotalPRs,
-			"active_runs":   r.ActiveRuns,
-			"scanning":      scanning,
-			"grade":         grade,
-			"critical":      r.Critical,
-			"high":          r.High,
-			"medium":        r.Medium,
-			"low":           r.Low,
+			"id":           r.ID,
+			"full_name":    r.FullName,
+			"owner":        r.Owner,
+			"last_scan_at": r.LastScanAt,
+			"total_runs":   r.TotalRuns,
+			"total_prs":    r.TotalPRs,
+			"active_runs":  r.ActiveRuns,
+			"scanning":     scanning,
+			"grade":        grade,
+			"critical":     r.Critical,
+			"high":         r.High,
+			"medium":       r.Medium,
+			"low":          r.Low,
 		})
 	}
 
@@ -201,15 +204,15 @@ func (h *Handlers) ListFindings(w http.ResponseWriter, r *http.Request) {
 	var out []map[string]interface{}
 	for rows.Next() {
 		var (
-			id, runID                              int64
-			filePath, severity, category, title   string
-			description                            string
-			repoFullName, commitSha               string
-			lineStart, lineEnd                    *int
-			evidence                              *string
-			confidence                            *float64
-			createdAt                             string
-			verification                          string
+			id, runID                           int64
+			filePath, severity, category, title string
+			description                         string
+			repoFullName, commitSha             string
+			lineStart, lineEnd                  *int
+			evidence                            *string
+			confidence                          *float64
+			createdAt                           string
+			verification                        string
 		)
 		if err := rows.Scan(&id, &runID, &filePath, &lineStart, &lineEnd,
 			&severity, &category, &title, &description, &evidence,
@@ -252,13 +255,13 @@ func (h *Handlers) ListFindings(w http.ResponseWriter, r *http.Request) {
 // The Security page renders these directly as its KPI strip.
 func (h *Handlers) InsightsSummary(w http.ResponseWriter, r *http.Request) {
 	var (
-		totalRepos, totalRuns           int
+		totalRepos, totalRuns             int
 		critical, high, medium, low, info int
-		verified, unverified            int
-		vulnerableRepos                 int
-		avgFixHours                     *float64
-		lastWeekCritical               int
-		prevWeekCritical               int
+		verified, unverified              int
+		vulnerableRepos                   int
+		avgFixHours                       *float64
+		lastWeekCritical                  int
+		prevWeekCritical                  int
 	)
 	err := h.DB.QueryRow(r.Context(), `
 		SELECT
@@ -292,8 +295,8 @@ func (h *Handlers) InsightsSummary(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"total_repos":          totalRepos,
-		"total_runs":           totalRuns,
+		"total_repos": totalRepos,
+		"total_runs":  totalRuns,
 		"findings": map[string]interface{}{
 			"critical": critical,
 			"high":     high,
@@ -301,11 +304,11 @@ func (h *Handlers) InsightsSummary(w http.ResponseWriter, r *http.Request) {
 			"low":      low,
 			"info":     info,
 		},
-		"verified":                       verified,
-		"unverified":                      unverified,
-		"vulnerable_repos":                vulnerableRepos,
-		"avg_fix_time_hours":             avgFixHours,
-		"critical_delta_last_week":       lastWeekCritical - prevWeekCritical,
+		"verified":                 verified,
+		"unverified":               unverified,
+		"vulnerable_repos":         vulnerableRepos,
+		"avg_fix_time_hours":       avgFixHours,
+		"critical_delta_last_week": lastWeekCritical - prevWeekCritical,
 	})
 }
 
@@ -313,7 +316,8 @@ func (h *Handlers) InsightsSummary(w http.ResponseWriter, r *http.Request) {
 // for the last `?days=30` days. Backs the Security page's trend chart.
 //
 // Series shape:
-//   [{ "date": "2026-07-19", "critical": 3, "high": 8, "medium": 12, "low": 4, "info": 1 }, ...]
+//
+//	[{ "date": "2026-07-19", "critical": 3, "high": 8, "medium": 12, "low": 4, "info": 1 }, ...]
 //
 // Days with no findings still appear in the series (with zeros) so the
 // chart line doesn't have gaps. We LEFT JOIN a generate_series of dates
@@ -358,7 +362,7 @@ func (h *Handlers) FindingsOverTime(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		out = append(out, map[string]interface{}{
-			"date":    day,
+			"date":     day,
 			"critical": crit,
 			"high":     highV,
 			"medium":   med,
@@ -416,13 +420,13 @@ func (h *Handlers) MostVulnerableRepos(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		out = append(out, map[string]interface{}{
-			"id":           id,
-			"full_name":    fullName,
-			"owner":        owner,
-			"critical":     crit,
-			"high":          highV,
+			"id":             id,
+			"full_name":      fullName,
+			"owner":          owner,
+			"critical":       crit,
+			"high":           highV,
 			"findings_total": total,
-			"last_scan_at": lastScanAt,
+			"last_scan_at":   lastScanAt,
 		})
 	}
 

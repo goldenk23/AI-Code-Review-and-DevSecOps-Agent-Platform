@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/goldenk23/ai-devsecops-reviewer/api/internal/auth"
 	"github.com/goldenk23/ai-devsecops-reviewer/api/internal/github"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -70,13 +71,13 @@ func (h *Handlers) ListAnalyses(w http.ResponseWriter, r *http.Request) {
 
 // GetAnalysis returns details of a specific analysis run
 func (h *Handlers) GetAnalysis(w http.ResponseWriter, r *http.Request) {
-	/** 
-		
-	 runID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	 Get the "id" from the URL (e.g. /runs/42 → "42"), convert it to a 64-bit integer (base 10), and store the number in runID and any error in err.
+	/**
+
+	runID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	Get the "id" from the URL (e.g. /runs/42 → "42"), convert it to a 64-bit integer (base 10), and store the number in runID and any error in err.
 
 	*/
-	
+
 	runID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
@@ -189,18 +190,19 @@ func (h *Handlers) GetAnalysisFindings(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(findings)
 }
 
-/**
+/*
+*
 PostComments posts a summary of the analysis findings as a comment on the
 GitHub pull request that triggered the run.
 
 High-level flow:
-  1. Read the analysis-run ID from the URL (e.g. /api/analyses/42/comments).
-  2. Look up which repo, commit, and PR that run belongs to (from Postgres).
-  3. Pull all the findings the worker saved for that run.
-  4. Turn those findings into a Markdown comment via buildCommentBody.
-  5. Grab a GitHub OAuth token from the database so we can authenticate.
-  6. Ask our GitHub client to post the comment to the PR.
-  7. Reply with a small JSON message so the caller knows it worked.
+ 1. Read the analysis-run ID from the URL (e.g. /api/analyses/42/comments).
+ 2. Look up which repo, commit, and PR that run belongs to (from Postgres).
+ 3. Pull all the findings the worker saved for that run.
+ 4. Turn those findings into a Markdown comment via buildCommentBody.
+ 5. Grab a GitHub OAuth token from the database so we can authenticate.
+ 6. Ask our GitHub client to post the comment to the PR.
+ 7. Reply with a small JSON message so the caller knows it worked.
 */
 func (h *Handlers) PostComments(w http.ResponseWriter, r *http.Request) {
 	// r.Context() carries cancellation: if the client disconnects, the context
@@ -263,10 +265,16 @@ func (h *Handlers) PostComments(w http.ResponseWriter, r *http.Request) {
 
 	tag := commentTag(runID)
 
-	var token string
-	err = h.DB.QueryRow(ctx, "SELECT oauth_token_encrypted FROM users LIMIT 1").Scan(&token)
+	var encToken string
+	err = h.DB.QueryRow(ctx, "SELECT oauth_token_encrypted FROM users LIMIT 1").Scan(&encToken)
 	if err != nil {
 		http.Error(w, "no user token available", http.StatusInternalServerError)
+		return
+	}
+	// Decrypt the stored token before using it to call GitHub.
+	token, err := auth.DecryptToken(encToken)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to decrypt stored token: %v", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -288,7 +296,7 @@ func (h *Handlers) PostComments(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&severity, &category, &filePath, &title, &description, &confidence, &patch); err != nil {
 			continue
 		}
-		
+
 		if patch != "" {
 			// Natively post to GitHub Copilot-style inline PR review comment!
 			snippet, startLine, endLine := parsePatchForGitHub(patch)
@@ -313,7 +321,7 @@ func (h *Handlers) PostComments(w http.ResponseWriter, r *http.Request) {
 				icon, severity, category, filePath, title, confidence))
 		}
 	}
-	
+
 	comment := b.String()
 	if count == 0 {
 		comment += "🎉 **No unpatched findings!** The AI either fixed everything or found no issues.\n"
@@ -353,12 +361,15 @@ func (h *Handlers) PostComments(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-/**
+/*
+*
 parseRepoFullName splits a GitHub "full_name" like "acme/web" into its
 owner ("acme") and repo ("web") parts.
 
 GitHub's REST API takes owner and repo as SEPARATE path parameters, e.g.
-   POST /repos/{owner}/{repo}/pulls/{pr_number}/comments
+
+	POST /repos/{owner}/{repo}/pulls/{pr_number}/comments
+
 but the database stores them combined as the single string "acme/web".
 This helper does the split.
 
@@ -424,15 +435,17 @@ func parsePatchForGitHub(patch string) (snippet string, startLine int, endLine i
 		}
 	}
 
-	return strings.Join(out, "\n"), startLine, endLine
+	return strings.TrimSuffix(strings.Join(out, "\n"), "\n"), startLine, endLine
 }
 
-/**
+/*
+*
 commentTag builds the hidden marker we embed in every review comment so we can
 recognize our own comment later and update it instead of posting a duplicate.
 
 The tag is a Markdown HTML comment of the form:
-    <!-- ai-review-run:42 -->
+
+	<!-- ai-review-run:42 -->
 
 Why an HTML comment? GitHub renders Markdown but leaves raw HTML comments in
 the source invisible in the rendered view — so humans see a clean comment while
