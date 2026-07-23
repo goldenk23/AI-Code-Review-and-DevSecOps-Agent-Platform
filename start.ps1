@@ -5,7 +5,8 @@
 #     .\start.ps1
 #
 # WHAT IT DOES (in this order):
-#   1. Starts Postgres + Redis via `docker compose up -d`
+#   1. Starts Postgres + Redis via `docker compose up -d postgres redis`
+#      (infra only -- the full-stack compose is used separately, on purpose)
 #   2. Waits for Postgres to be ready (max 30s)
 #   3. Applies migrations 001..006 if not already applied (idempotent)
 #   4. Makes sure apps/api/.env has GITHUB_CALLBACK_URL (needed for OAuth)
@@ -65,10 +66,18 @@ function Stop-AllChildren {
     Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
         Where-Object { $_.CommandLine -like "*next*dev*" -or $_.CommandLine -like "*next\dist\server\lib\start-server*" } |
         ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch { } }
+    # Same for stray Python workers: the venv launcher re-execs the base
+    # interpreter as a CHILD, which escapes Stop-Tree (same reparenting
+    # problem as next dev). Orphan workers keep consuming jobs off the Redis
+    # queue forever -- a secret 2nd/3rd/4th worker silently corrupts every
+    # benchmark ("1 worker" baseline that isn't). Match the full project
+    # path so unrelated python work is never touched.
+    Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
+        Where-Object { $_.CommandLine -like "*$root\apps\worker*worker.py*" } |
+        ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch { } }
     # Belt + braces: free the ports we're about to bind, regardless of process
     # name. If ANYTHING is listening on 3000/8080/8000, kill its owner.
-    foreach ($port in 3000, 8080, 8000) {C:\Users\golde\Desktop\Projects\AI-Code-Review-and-DevSecOps-Agent-Platform\apps\ai-service\.env
-    i just want to 
+    foreach ($port in 3000, 8080, 8000) {
         $owner = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
         foreach ($conn in $owner) {
             try { Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue } catch { }
@@ -105,6 +114,15 @@ Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
         Write-Host "    killing orphaned node (PID $($_.ProcessId))"
         try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch { }
     }
+# Kill orphaned Python workers from previous runs (venv child escapes
+# Stop-Tree -- see Stop-AllChildren for details). Without this, leftover
+# workers race the fresh one on the same queue and corrupt benchmark runs.
+Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
+    Where-Object { $_.CommandLine -like "*$root\apps\worker*worker.py*" } |
+    ForEach-Object {
+        Write-Host "    killing orphaned worker (PID $($_.ProcessId))"
+        try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch { }
+    }
 foreach ($port in 3000, 8080, 8000) {
     $owner = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
     foreach ($conn in $owner) {
@@ -116,8 +134,12 @@ Write-OK "Ports free"
 # -----------------------------------------------------------------------------
 # Step 1: bring up Postgres + Redis
 # -----------------------------------------------------------------------------
-Write-Step "Starting Postgres + Redis (docker compose up -d)"
-docker compose up -d
+Write-Step "Starting Postgres + Redis (docker compose up -d postgres redis)"
+# Infra only! The compose file now also defines api/ai-service/worker/web, so a
+# bare `docker compose up -d` would build+start CONTAINERIZED copies of the
+# apps -- they'd squat on 3000/8080/8000 and collide with the local processes
+# launched in Step 6 below. Full-stack mode is opt-in: docker compose up --build.
+docker compose up -d postgres redis
 if ($LASTEXITCODE -ne 0) { throw "docker compose failed -- is Docker Desktop running?" }
 
 # -----------------------------------------------------------------------------
@@ -165,6 +187,16 @@ if (-not $hasCb) {
     Write-OK "Added GITHUB_CALLBACK_URL to apps/api/.env"
 } else {
     Write-OK "GITHUB_CALLBACK_URL already configured"
+}
+
+# Load AI service env vars (for AI_SERVICE_WORKERS)
+$aiEnv = "$root\apps\ai-service\.env"
+if (Test-Path $aiEnv) {
+    Get-Content $aiEnv | ForEach-Object {
+        if ($_ -match "^\s*([^#=]+)=(.*)$") {
+            Set-Item -Path "env:$($matches[1].Trim())" -Value $matches[2].Trim()
+        }
+    }
 }
 
 # -----------------------------------------------------------------------------
@@ -232,9 +264,23 @@ Write-Step "Launching services"
 # Commands run under `cmd.exe /c`, so use cmd syntax (no PowerShell `&` call
 # operator). Quote paths that may contain spaces.
 Launch "api"        "$root\apps\api"        "go run main.go"
-Launch "ai-service" "$root\apps\ai-service" """$root\apps\ai-service\.venv\Scripts\python.exe"" -m uvicorn main:app --port 8000"
+$aiWorkers = if ($env:AI_SERVICE_WORKERS) { $env:AI_SERVICE_WORKERS } else { "1" }
+Launch "ai-service" "$root\apps\ai-service" """$root\apps\ai-service\.venv\Scripts\python.exe"" -m uvicorn main:app --port 8000 --workers $aiWorkers"
 Launch "worker"     "$root\apps\worker"     """$root\apps\worker\.venv\Scripts\python.exe"" worker.py"
 Launch "web"         "$root\apps\web"        "npm run dev"
+
+# Wait for the API to finish `go run` compilation and bind :8080 (max 30s).
+# The dashboard loads instantly and shows ERR_CONNECTION_REFUSED if you open
+# it before the API is listening -- this wait keeps that from happening.
+# Warn-only (no throw) so you can still read the api log in the tail below.
+$apiReady = $false
+for ($i = 0; $i -lt 30; $i++) {
+    try {
+        $null = Invoke-WebRequest "http://localhost:8080/health" -UseBasicParsing -TimeoutSec 2
+        $apiReady = $true; break
+    } catch { Start-Sleep -Seconds 1 }
+}
+if ($apiReady) { Write-OK "API is healthy on :8080" } else { Write-Host "    [warn] API not healthy after 30s -- check logs\api.err.log" -ForegroundColor Yellow }
 
 # -----------------------------------------------------------------------------
 # Step 7: tail all 4 log files live with a colored prefix.
