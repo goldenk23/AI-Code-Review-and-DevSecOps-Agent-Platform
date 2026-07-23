@@ -1,15 +1,21 @@
-import hmac, hashlib, json, sys, time, urllib.request
+import hmac, hashlib, json, sys, time, os, urllib.request
 
 secret = b"testsecret123"
 
 REPO_FULL_NAME = "goldenk23/AI-Code-Review-and-DevSecOps-Agent-Platform"
+
+# Unique SHA per call: nanosecond timestamp + random hex suffix.
+# Using just int(time.time()) (seconds) caused collisions when webhooks
+# were sent in the same second, and the API's ON CONFLICT DO NOTHING
+# silently dropped the duplicates -- breaking benchmark counts.
+unique_sha = f"test{time.time_ns()}_{os.urandom(4).hex()}"
 
 payload = {
     "action": "opened",
     "pull_request": {
         "number": 1,
         "title": "Test PR",
-        "head": {"sha": f"test{int(time.time())}", "ref": "main"},
+        "head": {"sha": unique_sha, "ref": "main"},
         "user": {"login": "goldenk23"},
     },
     "repository": {

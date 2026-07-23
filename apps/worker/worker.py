@@ -100,19 +100,29 @@ TOKEN_USAGE = Counter(
     "ai_token_usage_total",
     "Total LLM tokens used",
 )
+# 5) Patch verification latency -- one observation per AI-suggested patch we
+#    apply+test in a throwaway workspace copy (verify_patch). benchmark.ps1's
+#    `-Only patch` test reads patch_verify_seconds_sum/_count off /metrics.
+PATCH_VERIFY = Histogram(
+    "patch_verify_seconds",
+    "Time spent verifying one AI-suggested patch",
+)
 
-# Start the metrics server ONCE per worker process. We use a try/except so
-# that running the worker twice on the same machine (dev mistake) doesn't
-# crash the second one with a bind error -- it just logs and moves on, and
-# the existing server keeps serving.
+# Start the metrics server ONCE per worker process. METRICS_PORT overrides the
+# default 9090 so several workers on one machine can each expose their own
+# /metrics (benchmark.ps1's scaling test spawns its extra workers on 9091/9092).
+# We use a try/except so that two workers on the SAME port (dev mistake)
+# doesn't crash the second one with a bind error -- it just logs and moves on,
+# and the existing server keeps serving.
+METRICS_PORT = int(os.getenv("METRICS_PORT", "9090"))
 try:
-    start_http_server(9090)
-    print("Prometheus metrics server started on http://localhost:9090/metrics")
+    start_http_server(METRICS_PORT)
+    print(f"Prometheus metrics server started on http://localhost:{METRICS_PORT}/metrics")
 except OSError as e:
     # Most common: "Address already in use" when another worker (or another
     # dev on the same machine) has the port. Don't crash -- the existing
     # metrics server is fine.
-    print(f"Could not bind metrics server on :9090 ({e}); metrics disabled for this process")
+    print(f"Could not bind metrics server on :{METRICS_PORT} ({e}); metrics disabled for this process")
 
 
 def get_db_connection():
@@ -898,7 +908,9 @@ def verify_patch(workspace, patch, test_command):
     """
     import tempfile
     import shutil
-    with tempfile.TemporaryDirectory() as tmpdir:
+    # Time the whole apply+test cycle (one histogram observation per patch) --
+    # this is the metric benchmark.ps1's patch-verification test reads.
+    with PATCH_VERIFY.time(), tempfile.TemporaryDirectory() as tmpdir:
         # dirs_exist_ok=True is needed on 3.8+; the real workspace has files
         # we want to overwrite, but the tmpdir starts empty.
         shutil.copytree(workspace, tmpdir, dirs_exist_ok=True)
