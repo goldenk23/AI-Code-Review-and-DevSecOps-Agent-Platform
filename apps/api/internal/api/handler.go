@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -401,6 +402,183 @@ func parsePatchForGitHub(patch string) (snippet string, startLine int, endLine i
 // creates a fresh comment rather than overwriting the previous run's.
 func commentTag(runID int64) string {
 	return fmt.Sprintf("<!-- ai-review-run:%d -->", runID)
+}
+
+// ConnectRepository installs a GitHub webhook on a user-supplied repo and
+// upserts the repo row. The user must be logged in (session cookie) so we can
+// retrieve their OAuth token for the GitHub API call.
+//
+// POST /api/repositories/connect
+// Body: { "full_name": "owner/repo" }
+func (h *Handlers) ConnectRepository(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// 1. Identify caller from session cookie.
+	cookie, err := r.Cookie(auth.SessionCookieName)
+	if err != nil {
+		http.Error(w, "not logged in", http.StatusUnauthorized)
+		return
+	}
+	claims, err := auth.ParseSessionToken(cookie.Value)
+	if err != nil {
+		http.Error(w, "invalid session", http.StatusUnauthorized)
+		return
+	}
+
+	// 2. Parse request body.
+	var body struct {
+		FullName string `json:"full_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.FullName == "" {
+		http.Error(w, "full_name required (e.g. owner/repo)", http.StatusBadRequest)
+		return
+	}
+	parts := strings.SplitN(body.FullName, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		http.Error(w, "full_name must be owner/repo", http.StatusBadRequest)
+		return
+	}
+	owner, repo := parts[0], parts[1]
+
+	// 3. Load the user's OAuth token.
+	var encToken string
+	err = h.DB.QueryRow(ctx,
+		`SELECT oauth_token_encrypted FROM users WHERE id = $1`, claims.UserID,
+	).Scan(&encToken)
+	if err != nil {
+		http.Error(w, "user not found", http.StatusInternalServerError)
+		return
+	}
+	token, err := auth.DecryptToken(encToken)
+	if err != nil {
+		http.Error(w, "failed to decrypt token", http.StatusInternalServerError)
+		return
+	}
+
+	// 4. Install the webhook via GitHub API.
+	webhookURL := os.Getenv("WEBHOOK_PUBLIC_URL")
+	if webhookURL == "" {
+		webhookURL = "http://localhost:8080/webhooks/github"
+	}
+	webhookSecret := os.Getenv("GITHUB_WEBHOOK_SECRET")
+
+	ghClient := github.NewClient()
+	hookID, err := ghClient.CreateWebhook(ctx, owner, repo, webhookURL, webhookSecret, token)
+	if err != nil {
+		// Surface GitHub's error (e.g. 403 not admin, 422 already exists) directly.
+		http.Error(w, fmt.Sprintf("GitHub error: %v", err), http.StatusBadGateway)
+		return
+	}
+
+	// 5. Upsert the repo row and link it to the user.
+	tx, err := h.DB.Begin(ctx)
+	if err != nil {
+		http.Error(w, "db error", http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	var repoID int64
+	err = tx.QueryRow(ctx, `
+		INSERT INTO repositories (github_repo_id, full_name, owner, webhook_id)
+		VALUES (0, $1, $2, $3)
+		ON CONFLICT (full_name) DO UPDATE
+		  SET owner = EXCLUDED.owner, webhook_id = EXCLUDED.webhook_id
+		RETURNING id`,
+		body.FullName, owner, hookID,
+	).Scan(&repoID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to save repo: %v", err), http.StatusInternalServerError)
+		return
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO repository_users (repo_id, user_id)
+		VALUES ($1, $2)
+		ON CONFLICT (repo_id, user_id) DO UPDATE SET linked_at = now()`,
+		repoID, claims.UserID,
+	)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to link repo: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		http.Error(w, "db commit error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"id":        repoID,
+		"full_name": body.FullName,
+		"hook_id":   hookID,
+		"message":   "webhook installed",
+	})
+}
+
+// DisconnectRepository removes the GitHub webhook for a repo and deletes the
+// repo↔user link. The repo row itself stays (historical runs remain visible).
+//
+// DELETE /api/repositories/{id}
+func (h *Handlers) DisconnectRepository(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	repoID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+
+	// 1. Identify caller.
+	cookie, err := r.Cookie(auth.SessionCookieName)
+	if err != nil {
+		http.Error(w, "not logged in", http.StatusUnauthorized)
+		return
+	}
+	claims, err := auth.ParseSessionToken(cookie.Value)
+	if err != nil {
+		http.Error(w, "invalid session", http.StatusUnauthorized)
+		return
+	}
+
+	// 2. Load repo + user token.
+	var fullName, encToken string
+	var hookID *int64
+	err = h.DB.QueryRow(ctx, `
+		SELECT r.full_name, r.webhook_id, u.oauth_token_encrypted
+		FROM repositories r
+		JOIN repository_users ru ON ru.repo_id = r.id
+		JOIN users u ON u.id = ru.user_id
+		WHERE r.id = $1 AND ru.user_id = $2`,
+		repoID, claims.UserID,
+	).Scan(&fullName, &hookID, &encToken)
+	if err != nil {
+		http.Error(w, "repo not found or not yours", http.StatusNotFound)
+		return
+	}
+
+	// 3. Remove webhook from GitHub (best-effort — if the hook was already
+	//    deleted on GitHub we still clean up our side).
+	if hookID != nil && *hookID > 0 {
+		token, err := auth.DecryptToken(encToken)
+		if err == nil {
+			owner, repo := parseRepoFullName(fullName)
+			ghClient := github.NewClient()
+			_ = ghClient.DeleteWebhook(ctx, owner, repo, *hookID, token)
+		}
+	}
+
+	// 4. Remove repo↔user link (keep repo row for history).
+	_, err = h.DB.Exec(ctx,
+		`DELETE FROM repository_users WHERE repo_id = $1 AND user_id = $2`,
+		repoID, claims.UserID,
+	)
+	if err != nil {
+		http.Error(w, "failed to unlink repo", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ListDeadJobs returns up to 50 permanently-failed jobs from the Redis

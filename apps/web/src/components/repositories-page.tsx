@@ -1,4 +1,5 @@
 "use client";
+import { useState } from "react";
 import { useRepositories } from "@/hooks/use-repositories";
 import { AppShell } from "@/components/app-shell";
 import { Card } from "@/components/ui/card";
@@ -17,6 +18,7 @@ import { relativeTime } from "@/lib/format";
 import type { RepositorySummary, RepoGrade } from "@/lib/types";
 import { useRouter } from "next/navigation";
 import { OnboardingState } from "@/components/onboarding-state";
+import { ConnectRepoModal } from "@/components/connect-repo-modal";
 
 const GRADE_STYLE: Record<RepoGrade, { chip: string; glow: string }> = {
   A: { chip: "bg-success/10 border-success/30 text-success", glow: "bg-success/5" },
@@ -27,6 +29,7 @@ const GRADE_STYLE: Record<RepoGrade, { chip: string; glow: string }> = {
 export function RepositoriesPage() {
   const { data, isLoading, error, refetch } = useRepositories();
   const repos = data ?? [];
+  const [showConnect, setShowConnect] = useState(false);
 
   const total = repos.length;
   const healthy = repos.filter((r) => r.grade === "A" && !r.scanning).length;
@@ -36,6 +39,7 @@ export function RepositoriesPage() {
 
   return (
     <AppShell>
+      {showConnect && <ConnectRepoModal onClose={() => setShowConnect(false)} />}
       <main className="flex-grow w-full max-w-container-max mx-auto px-margin-page py-8">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-8">
           <div>
@@ -48,7 +52,7 @@ export function RepositoriesPage() {
             <Button variant="ghost" onClick={() => refetch()}>
               <RefreshIcon className="text-[18px]" />Refresh
             </Button>
-            <Button variant="primary" disabled title="Repos are auto-added when a webhook fires">
+            <Button variant="primary" onClick={() => setShowConnect(true)}>
               <FolderCopyIcon className="text-[18px]" />Connect Repo
             </Button>
           </div>

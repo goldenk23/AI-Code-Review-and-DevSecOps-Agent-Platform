@@ -52,3 +52,26 @@ export async function put<T>(path: string, body: unknown): Promise<T> {
   }
   return res.json() as Promise<T>;
 }
+
+// `postJson` sends a JSON body and returns the server's response JSON.
+export async function postJson<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `HTTP ${res.status} on ${path}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+// `del` sends a DELETE request. Returns nothing (204 expected).
+export async function del(path: string): Promise<void> {
+  const res = await fetch(path, { method: "DELETE" });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `HTTP ${res.status} on ${path}`);
+  }
+}

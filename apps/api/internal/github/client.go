@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -47,6 +48,78 @@ func (c *client) GetPRDiff(ctx context.Context, owner, repo string, prNumber int
 		return "", fmt.Errorf("failed to read response body: %w", err)
 	}
 	return string(diff), nil
+}
+
+// Webhook represents a GitHub repository webhook.
+type Webhook struct {
+	ID     int64  `json:"id"`
+	Active bool   `json:"active"`
+	Config struct {
+		URL string `json:"url"`
+	} `json:"config"`
+}
+
+// CreateWebhook installs a pull_request webhook on the given repo using the
+// caller's OAuth token. Returns the webhook ID GitHub assigned, or an error.
+// GitHub returns 422 if a webhook with the same URL already exists.
+func (c *client) CreateWebhook(ctx context.Context, owner, repo, webhookURL, secret, token string) (int64, error) {
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":   "web",
+		"active": true,
+		"events": []string{"pull_request"},
+		"config": map[string]string{
+			"url":          webhookURL,
+			"content_type": "json",
+			"secret":       secret,
+		},
+	})
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/hooks", owner, repo)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(body)))
+	if err != nil {
+		return 0, fmt.Errorf("create webhook request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "AI-Code-Review-Bot")
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("create webhook: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusCreated {
+		return 0, fmt.Errorf("GitHub returned %d: %s", resp.StatusCode, string(respBody))
+	}
+	var hook Webhook
+	if err := json.Unmarshal(respBody, &hook); err != nil {
+		return 0, fmt.Errorf("decode webhook response: %w", err)
+	}
+	return hook.ID, nil
+}
+
+// DeleteWebhook removes a webhook from the given repo.
+func (c *client) DeleteWebhook(ctx context.Context, owner, repo string, hookID int64, token string) error {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/hooks/%d", owner, repo, hookID)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", url, nil)
+	if err != nil {
+		return fmt.Errorf("delete webhook request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "AI-Code-Review-Bot")
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("delete webhook: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("GitHub returned %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
 }
 
 type PRFile struct {

@@ -153,6 +153,8 @@ func main() {
 		r.Post("/analyses/{id}/post-comments", apiHandlers.PostComments)
 
 		r.Get("/repositories", apiHandlers.ListRepositories)
+		r.Post("/repositories/connect", apiHandlers.ConnectRepository)
+		r.Delete("/repositories/{id}", apiHandlers.DisconnectRepository)
 
 		// Optional ?severity=&repo_id=&limit= filters.
 		r.Get("/findings", apiHandlers.ListFindings)
