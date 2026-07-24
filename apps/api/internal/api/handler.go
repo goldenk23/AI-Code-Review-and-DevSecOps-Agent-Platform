@@ -485,7 +485,7 @@ func (h *Handlers) ConnectRepository(w http.ResponseWriter, r *http.Request) {
 		ON CONFLICT (full_name) DO UPDATE
 		  SET owner = EXCLUDED.owner, webhook_id = EXCLUDED.webhook_id
 		RETURNING id`,
-		body.FullName, owner, hookID,
+		body.FullName, owner, fmt.Sprintf("%d", hookID),
 	).Scan(&repoID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to save repo: %v", err), http.StatusInternalServerError)
