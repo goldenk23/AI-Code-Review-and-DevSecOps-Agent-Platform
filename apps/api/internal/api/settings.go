@@ -75,8 +75,7 @@ type settingsBody struct {
 
 // UpdateSettings upserts the singleton settings row. Only fields the
 // client sends are updated -- nil-pointers in settingsBody mean "leave
-// alone". This is a partial-update pattern familiar to anyone who's
-// used PATCH-style PUTs.
+// alone".
 //
 // We use ON CONFLICT to keep this idempotent: the row exists (inserted
 // by migration 007) so the conflict path is the common one; the INSERT

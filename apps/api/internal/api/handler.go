@@ -1,7 +1,3 @@
-/**
-This file create Api endpoints to check job status, and minimal Next.js dashboard to display it.
-*/
-
 package api
 
 import (
@@ -27,14 +23,9 @@ type Handlers struct {
 	Queue *queue.Client
 }
 
-// ListAnalyses returns analysis runs, newest first.
-//
-// Optional `?repo_id=N` filter narrows the list to one repository -- this
-// is what the /repositories page's "click a repo" flow uses: it redirects
-// to /?repo_id=N and the dashboard calls this endpoint with that filter.
-//
-// We JOIN repositories so we can also return repo_full_name -- the
-// dashboard shows the repo name on each row when listing across repos.
+// ListAnalyses returns analysis runs, newest first. Optional `?repo_id=N`
+// narrows the list to one repository. repositories is JOINed so each row
+// carries repo_full_name for cross-repo listings.
 func (h *Handlers) ListAnalyses(w http.ResponseWriter, r *http.Request) {
 	sql := `
 		SELECT ar.id, ar.status, ar.trigger, ar.commit_sha, ar.created_at::text,
@@ -74,15 +65,8 @@ func (h *Handlers) ListAnalyses(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(runs)
 }
 
-// GetAnalysis returns details of a specific analysis run
+// GetAnalysis returns details of a specific analysis run.
 func (h *Handlers) GetAnalysis(w http.ResponseWriter, r *http.Request) {
-	/**
-
-	runID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	Get the "id" from the URL (e.g. /runs/42 → "42"), convert it to a 64-bit integer (base 10), and store the number in runID and any error in err.
-
-	*/
-
 	runID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
@@ -112,7 +96,7 @@ func (h *Handlers) GetAnalysis(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetAnalysisJobs returns all jobs for a specific analysis run
+// GetAnalysisJobs returns all jobs for a specific analysis run.
 func (h *Handlers) GetAnalysisJobs(w http.ResponseWriter, r *http.Request) {
 	runID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
@@ -150,7 +134,7 @@ func (h *Handlers) GetAnalysisJobs(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(jobs)
 }
 
-// GetAnalysisFindings returns all findings for a specific analysis run
+// GetAnalysisFindings returns all findings for a specific analysis run.
 func (h *Handlers) GetAnalysisFindings(w http.ResponseWriter, r *http.Request) {
 	runID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
@@ -234,47 +218,19 @@ func (h *Handlers) GetAnalysisGitHubToken(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(map[string]string{"token": token})
 }
 
-/*
-*
-PostComments posts a summary of the analysis findings as a comment on the
-GitHub pull request that triggered the run.
-
-High-level flow:
- 1. Read the analysis-run ID from the URL (e.g. /api/analyses/42/comments).
- 2. Look up which repo, commit, and PR that run belongs to (from Postgres).
- 3. Pull all the findings the worker saved for that run.
- 4. Turn those findings into a Markdown comment via buildCommentBody.
- 5. Grab a GitHub OAuth token from the database so we can authenticate.
- 6. Ask our GitHub client to post the comment to the PR.
- 7. Reply with a small JSON message so the caller knows it worked.
-*/
+// PostComments posts the analysis findings to the GitHub PR that triggered the
+// run: findings with a patch go out as inline suggestion review comments, the
+// rest are rolled into a single top-level summary comment (created once, then
+// updated in place on re-runs).
 func (h *Handlers) PostComments(w http.ResponseWriter, r *http.Request) {
-	// r.Context() carries cancellation: if the client disconnects, the context
-	// is cancelled and the DB/GitHub calls below will abort early instead of
-	// running to completion uselessly.
 	ctx := r.Context()
 
-	// chi.URLParam(r, "id") pulls the "{id}" segment out of the matched route.
-	// For "/api/analyses/42/comments" it returns the string "42".
-	// strconv.ParseInt(base 10, 64-bit) converts "42" -> the int64 42.
-	// If the user sent /analyses/abc, conversion fails -> HTTP 400 Bad Request.
 	runID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
 
-	// STEP 1: Find the repo full_name, commit SHA, and PR number for this run.
-	//
-	// We JOIN three tables because a single analysis_runs row only stores
-	// foreign keys (repo_id, pr_id) - the actual repo name and PR number live
-	// in the repositories and pull_requests tables.
-	//   analysis_runs ar  - one row per "we ran a review on this PR"
-	//   repositories   r   - one row per tracked GitHub repo (has full_name)
-	//   pull_requests  pr  - one row per PR we've seen (has pr_number)
-	//
-	// QueryRow = we expect exactly ONE row (run IDs are unique).
-	// .Scan(...) copies the three selected columns into our local variables.
 	var repoFullName, commitSHA string
 	var prNumber int
 	err = h.DB.QueryRow(ctx, `
@@ -285,16 +241,11 @@ func (h *Handlers) PostComments(w http.ResponseWriter, r *http.Request) {
 		WHERE ar.id = $1
 	`, runID).Scan(&repoFullName, &commitSHA, &prNumber)
 	if err != nil {
-		// No row came back -> the run ID doesn't exist -> HTTP 404 Not Found.
 		http.Error(w, "analysis run not found", http.StatusNotFound)
 		return
 	}
 
-	// STEP 2: Fetch every finding the worker saved for this run.
-	//
-	// Query (not QueryRow) because we expect MANY rows (one per finding).
-	// ORDER BY severity makes the most serious findings print first in the
-	// comment, so a human scanning GitHub sees the important stuff up top.
+	// ORDER BY severity so the most serious findings print first in the comment.
 	rows, err := h.DB.Query(ctx, `
 		SELECT severity, category, file_path, title, description, confidence, COALESCE(suggested_patch, '')
 		FROM findings WHERE run_id = $1 ORDER BY severity
@@ -303,8 +254,6 @@ func (h *Handlers) PostComments(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to query findings", http.StatusInternalServerError)
 		return
 	}
-	// defer rows.Close() makes sure the cursor is released when the function
-	// returns - even on an early error return. Skipping this leaks DB connections.
 	defer rows.Close()
 
 	tag := commentTag(runID)
@@ -319,9 +268,6 @@ func (h *Handlers) PostComments(w http.ResponseWriter, r *http.Request) {
 
 	ghClient := github.NewClient()
 
-	// STEP 7: We'll split findings into two buckets:
-	// - Those WITH a patch -> send as inline GitHub PR review comments.
-	// - Those WITHOUT a patch -> accumulate into a top-level summary comment.
 	var b strings.Builder
 	b.WriteString(commentTag(runID) + "\n\n")
 	b.WriteString(fmt.Sprintf("## AI Code Review & DevSecOps Agent Platform - Run #%d\n\n", runID))
@@ -335,15 +281,13 @@ func (h *Handlers) PostComments(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if patch != "" {
-			// Natively post to GitHub Copilot-style inline PR review comment!
 			snippet, startLine, endLine := parsePatchForGitHub(patch)
 			if snippet != "" && endLine > 0 {
 				body := fmt.Sprintf("**%s**\n%s\n\n```suggestion\n%s\n```", title, description, snippet)
-				// Best-effort posting; we don't abort the whole run if one review comment fails.
+				// Best-effort: don't abort the whole run if one review comment fails.
 				_ = ghClient.PostReviewComment(ctx, owner, repo, prNumber, body, filePath, commitSHA, startLine, endLine, token)
 			}
 		} else {
-			// Accumulate for top-level summary comment
 			count++
 			icon := ""
 			switch severity {
@@ -366,12 +310,10 @@ func (h *Handlers) PostComments(w http.ResponseWriter, r *http.Request) {
 
 	existingID, err := ghClient.FindExistingComment(ctx, owner, repo, prNumber, tag, token)
 	if err != nil {
-		// Network error (couldn't even reach GitHub). Surface it to the caller.
 		http.Error(w, fmt.Sprintf("failed to find existing comment: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	// Branch on whether we found an existing comment.
 	if existingID > 0 {
 		err = ghClient.UpdateComment(ctx, owner, repo, existingID, comment, token)
 		if err != nil {
@@ -379,8 +321,6 @@ func (h *Handlers) PostComments(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		// No existing comment for this run → create a new one. This is the
-		// first time we're posting review results for this run.
 		err = ghClient.CreateComment(ctx, owner, repo, prNumber, comment, token)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("failed to post comment: %v", err), http.StatusInternalServerError)
@@ -388,36 +328,16 @@ func (h *Handlers) PostComments(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// STEP 7: Success - reply with a small JSON body so the caller knows it worked.
-	// Content-Type tells the browser/curl how to interpret the body.
 	w.Header().Set("Content-Type", "application/json")
-	// json.NewEncoder(w).Encode writes the map as JSON straight to the response:
-	//   {"message":"comment posted"}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"message": "comment posted",
 	})
 }
 
-/*
-*
-parseRepoFullName splits a GitHub "full_name" like "acme/web" into its
-owner ("acme") and repo ("web") parts.
-
-GitHub's REST API takes owner and repo as SEPARATE path parameters, e.g.
-
-	POST /repos/{owner}/{repo}/pulls/{pr_number}/comments
-
-but the database stores them combined as the single string "acme/web".
-This helper does the split.
-
-If the input isn't exactly two parts (e.g. "web" or "a/b/c"), we return two
-empty strings so the caller can notice something is wrong.
-*/
+// parseRepoFullName splits a GitHub "full_name" ("acme/web") into owner and
+// repo. Returns two empty strings if the input isn't exactly two parts.
 func parseRepoFullName(fullName string) (string, string) {
-	// strings.Split returns a slice of substrings. "acme/web" -> ["acme", "web"].
 	parts := strings.Split(fullName, "/")
-	// We only expect exactly 2 parts. Any other shape means the data is malformed,
-	// so we refuse to guess and let the caller handle it.
 	if len(parts) == 2 {
 		return parts[0], parts[1]
 	}
@@ -428,7 +348,6 @@ func parsePatchForGitHub(patch string) (snippet string, startLine int, endLine i
 	lines := strings.Split(patch, "\n")
 	var out []string
 
-	// e.g. @@ -2,7 +2,7 @@
 	hunkRegex := regexp.MustCompile(`^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@`)
 
 	inHunk := false
@@ -439,7 +358,7 @@ func parsePatchForGitHub(patch string) (snippet string, startLine int, endLine i
 				inHunk = true
 				startLine, _ = strconv.Atoi(matches[1])
 
-				oldCount := 1 // default to 1 if missing
+				oldCount := 1
 				if matches[2] != "" {
 					oldCount, _ = strconv.Atoi(matches[2])
 				}
@@ -463,11 +382,11 @@ func parsePatchForGitHub(patch string) (snippet string, startLine int, endLine i
 		} else if strings.HasPrefix(line, " ") {
 			out = append(out, strings.TrimPrefix(line, " "))
 		} else if strings.HasPrefix(line, "-") {
-			// skip
+			// skip removed lines
 		} else if strings.HasPrefix(line, "\\") {
 			// skip "\ No newline at end of file"
 		} else if strings.HasPrefix(line, "@@") {
-			// multi-hunk patch? We only support single hunk for now, break
+			// only single-hunk patches are supported
 			break
 		}
 	}
@@ -475,25 +394,11 @@ func parsePatchForGitHub(patch string) (snippet string, startLine int, endLine i
 	return strings.TrimSuffix(strings.Join(out, "\n"), "\n"), startLine, endLine
 }
 
-/*
-*
-commentTag builds the hidden marker we embed in every review comment so we can
-recognize our own comment later and update it instead of posting a duplicate.
-
-The tag is a Markdown HTML comment of the form:
-
-	<!-- ai-review-run:42 -->
-
-Why an HTML comment? GitHub renders Markdown but leaves raw HTML comments in
-the source invisible in the rendered view — so humans see a clean comment while
-our FindExistingComment function can still grep for "ai-review-run:42" in the
-raw body to identify which comment is ours.
-
-The run id is the uniqueness key: one comment per run, updated in place across
-re-runs of the same run. Using the run id (instead of, say, the PR number) means
-a brand-new run on the same PR correctly creates a fresh comment rather than
-overwriting the previous run's comment.
-*/
+// commentTag builds a hidden HTML-comment marker embedded in every review
+// comment. GitHub keeps raw HTML comments out of the rendered view, so
+// FindExistingComment can match it in the raw body to update in place instead
+// of posting duplicates. The run id keys uniqueness: a new run on the same PR
+// creates a fresh comment rather than overwriting the previous run's.
 func commentTag(runID int64) string {
 	return fmt.Sprintf("<!-- ai-review-run:%d -->", runID)
 }
@@ -507,9 +412,8 @@ func (h *Handlers) ListDeadJobs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to read dead-letter queue", http.StatusInternalServerError)
 		return
 	}
-	// Each element is a JSON blob the worker pushed. Wrap them as RawMessage so
-	// the response is a JSON array of objects (not an array of escaped strings),
-	// which is what the dashboard's DeadJob[] type expects.
+	// Wrap as RawMessage so the response is a JSON array of objects rather than
+	// an array of escaped strings, which is what the dashboard expects.
 	raw := make([]json.RawMessage, len(jobs))
 	for i, j := range jobs {
 		raw[i] = json.RawMessage(j)

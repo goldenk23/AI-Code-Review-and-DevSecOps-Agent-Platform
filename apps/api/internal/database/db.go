@@ -1,20 +1,15 @@
-package database //This file belongs to the `database` package
-
+package database
 
 import (
-	"context" //used to control timeouts/cancellation (e.g., "stop if this takes too long").
+	"context"
+	"fmt"
+	"os"
 
-	"fmt" //for formatting error messages.
-
-	"os" //to read environment variables.
-
-
-	"github.com/jackc/pgx/v5/pgxpool" //a PostgreSQL driver for Go that manages a __pool of database connections__.
-
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// NewPool creates a connection pool to PostgreSQL.
-// A "pool" keeps multiple connections open so we don't reconnect on every request.
+// NewPool creates a PostgreSQL connection pool from DATABASE_URL and verifies
+// connectivity with a ping before returning.
 func NewPool(ctx context.Context) (*pgxpool.Pool, error) {
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {

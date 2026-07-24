@@ -7,13 +7,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Handler struct {
-	DB *pgxpool.Pool // Database connection pool
+	DB *pgxpool.Pool
 }
 
 // LoginHandler redirects the user to GitHub's OAuth authorization page.
@@ -56,6 +58,10 @@ func (h *Handler) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("failed to get user: %v", err), http.StatusBadGateway)
 		return
 	}
+	if !githubUserAllowed(user.Login) {
+		http.Error(w, "GitHub user is not allowed for this deployment", http.StatusForbidden)
+		return
+	}
 	repositories, err := GetRepositories(ctx, accessToken)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to list repositories: %v", err), http.StatusBadGateway)
@@ -85,6 +91,10 @@ func (h *Handler) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 	).Scan(&userID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to save user: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if _, err = tx.Exec(ctx, "DELETE FROM repository_users WHERE user_id = $1", userID); err != nil {
+		http.Error(w, fmt.Sprintf("failed to refresh repository access: %v", err), http.StatusInternalServerError)
 		return
 	}
 	for _, repo := range repositories {
@@ -133,7 +143,7 @@ func (h *Handler) SessionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	claims, err := ParseSessionToken(cookie.Value)
-	if err != nil {
+	if err != nil || !githubUserAllowed(claims.Username) {
 		ClearSessionCookie(w)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
@@ -146,6 +156,20 @@ func (h *Handler) SessionHandler(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 	ClearSessionCookie(w)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func githubUserAllowed(username string) bool {
+	configured := strings.TrimSpace(os.Getenv("ALLOWED_GITHUB_USERS"))
+	if configured == "" {
+		environment := strings.ToLower(os.Getenv("ENVIRONMENT"))
+		return environment == "" || environment == "development" || environment == "test"
+	}
+	for _, allowed := range strings.Split(configured, ",") {
+		if strings.EqualFold(strings.TrimSpace(allowed), username) {
+			return true
+		}
+	}
+	return false
 }
 
 func generateRandomState() (string, error) {

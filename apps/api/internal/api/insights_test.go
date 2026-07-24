@@ -3,8 +3,6 @@ package api
 import "testing"
 
 // TestGradeForCounts checks the security-grade rubric.
-// (This test will FAIL until you fix the rubric in Gap 3 — that's intentional;
-//  it documents the desired behavior.)
 func TestGradeForCounts(t *testing.T) {
 	cases := []struct {
 		crit, high, med int
