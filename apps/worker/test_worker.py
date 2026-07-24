@@ -97,3 +97,56 @@ def test_git_clone_environment_uses_transient_header(monkeypatch):
     assert env["GIT_CONFIG_KEY_0"] == "http.extraHeader"
     assert env["GIT_CONFIG_VALUE_0"] == "Authorization: Bearer github-token"
     assert os.environ.get("GIT_CONFIG_COUNT") is None
+
+
+
+def test_repository_execution_requires_opt_in_in_production(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.delenv("RUN_REPOSITORY_TESTS", raising=False)
+    assert worker.repository_execution_enabled() is False
+    monkeypatch.setenv("RUN_REPOSITORY_TESTS", "true")
+    assert worker.repository_execution_enabled() is True
+
+
+def test_repository_subprocess_environment_removes_credentials(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgres://secret")
+    monkeypatch.setenv("API_KEY", "secret")
+    monkeypatch.setenv("PATH", "safe-path")
+    env = worker.repository_subprocess_environment()
+    assert "DATABASE_URL" not in env
+    assert "API_KEY" not in env
+    assert env["PATH"] == "safe-path"
+
+
+def _http_status_error(status_code):
+    """Build an httpx.HTTPStatusError carrying the given response status."""
+    import httpx
+    request = httpx.Request("POST", "http://localhost:8000/review")
+    response = httpx.Response(status_code, request=request)
+    return httpx.HTTPStatusError(f"HTTP {status_code}", request=request, response=response)
+
+
+def test_ai_service_5xx_is_not_retryable():
+    # The exact bug behind runs stuck 'running': the LLM read times out, the
+    # ai-service retries internally and returns 502. Retrying the whole worker
+    # pipeline can't help, so a 5xx must be non-retryable.
+    assert worker.is_retryable(_http_status_error(502)) is False
+    assert worker.is_retryable(_http_status_error(500)) is False
+    assert worker.is_retryable(_http_status_error(503)) is False
+
+
+def test_timeouts_are_not_retryable():
+    import httpx
+    import subprocess
+    assert worker.is_retryable(httpx.ReadTimeout("read timed out")) is False
+    assert worker.is_retryable(subprocess.TimeoutExpired("git", 60)) is False
+
+
+def test_transient_failures_stay_retryable():
+    import httpx
+    # ai-service actually down (restarting) -> ConnectError, worth a retry.
+    assert worker.is_retryable(httpx.ConnectError("connection refused")) is True
+    # A 4xx (e.g. bad request) is not a 5xx; classification only fast-fails 5xx.
+    assert worker.is_retryable(_http_status_error(400)) is True
+    # A generic hiccup (DB blip) is retryable.
+    assert worker.is_retryable(RuntimeError("db connection reset")) is True

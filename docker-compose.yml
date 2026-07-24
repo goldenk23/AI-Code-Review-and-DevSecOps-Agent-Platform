@@ -46,6 +46,7 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: ai-review-postgres
+    restart: unless-stopped
     environment:
       POSTGRES_USER: review
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-reviewpass}
@@ -61,6 +62,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: ai-review-redis
+    restart: unless-stopped
     ports: ["127.0.0.1:6379:6379"]
     volumes: [redis_data:/data]
     healthcheck:
@@ -90,6 +92,7 @@ services:
   api:
     build: ./apps/api
     container_name: ai-review-api
+    restart: unless-stopped
     ports: ["127.0.0.1:8080:8080"]
     environment:
       # Service names, not localhost — containers reach each other by name.
@@ -104,6 +107,7 @@ services:
       # get the SAME value; override by exporting API_KEY before compose up.
       API_KEY: ${API_KEY:-dev-local-api-key}
       SESSION_SECRET: ${SESSION_SECRET:-dev-local-session-secret-change-me}
+      ALLOWED_GITHUB_USERS: ${ALLOWED_GITHUB_USERS:-}
       # Only the dashboard origin may call the API from a browser.
       CORS_ALLOWED_ORIGIN: ${APP_ORIGIN:-http://localhost:3000}
       # env_file below still provides GITHUB_* and TOKEN_ENCRYPTION_KEY;
@@ -122,6 +126,7 @@ services:
   ai-service:
     build: ./apps/ai-service
     container_name: ai-review-ai-service
+    restart: unless-stopped
     ports: ["127.0.0.1:8000:8000"]
     env_file: ./apps/ai-service/.env
     healthcheck:
@@ -135,6 +140,7 @@ services:
   # Scale out with: `docker compose up -d --scale worker=3`.
   worker:
     build: ./apps/worker
+    restart: unless-stopped
     environment:
       ENVIRONMENT: ${ENVIRONMENT:-development}
       DATABASE_URL: ${DATABASE_URL:-postgres://review:reviewpass@postgres:5432/ai_review}
@@ -142,6 +148,7 @@ services:
       AI_SERVICE_URL: ${AI_SERVICE_URL:-http://ai-service:8000}
       API_BASE_URL: ${API_BASE_URL:-http://api:8080}
       API_KEY: ${API_KEY:-dev-local-api-key}
+      RUN_REPOSITORY_TESTS: ${RUN_REPOSITORY_TESTS:-}
     expose: ["9090"]
     env_file: ./apps/worker/.env
     depends_on:
@@ -152,8 +159,11 @@ services:
   web:
     build: ./apps/web
     container_name: ai-review-web
+    restart: unless-stopped
     ports: ["127.0.0.1:3000:3000"]
     environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      ALLOWED_GITHUB_USERS: ${ALLOWED_GITHUB_USERS:-}
       # Rewrites run server-side inside the Next container, so they must
       # target the API by its service name (see apps/web/next.config.ts).
       # The browser still only talks to localhost:3000 — no CORS change.
@@ -170,6 +180,24 @@ services:
     depends_on:
       api: { condition: service_healthy }
 
+  production-check:
+    image: alpine:3.20
+    profiles: ["production"]
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      APP_DOMAIN: ${APP_DOMAIN:-localhost}
+      APP_ORIGIN: ${APP_ORIGIN:-http://localhost:3000}
+      GITHUB_CALLBACK_URL: ${GITHUB_CALLBACK_URL:-http://localhost:3000/auth/github/callback}
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        test "$${ENVIRONMENT}" = "production"
+        test -n "$${APP_DOMAIN}" && test "$${APP_DOMAIN}" != "localhost"
+        case "$${APP_ORIGIN}" in https://*) ;; *) exit 1 ;; esac
+        case "$${GITHUB_CALLBACK_URL}" in https://*) ;; *) exit 1 ;; esac
+    restart: "no"
+
   gateway:
     image: caddy:2.10.0-alpine
     profiles: ["production"]
@@ -185,6 +213,7 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
+      production-check: { condition: service_completed_successfully }
       api: { condition: service_healthy }
       web: { condition: service_healthy }
 

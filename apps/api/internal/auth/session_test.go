@@ -57,3 +57,18 @@ func TestEncryptionKeyRequiredInProduction(t *testing.T) {
 		t.Fatal("missing production encryption key was accepted")
 	}
 }
+
+
+
+func TestGitHubUserAllowlist(t *testing.T) {
+	t.Setenv("ENVIRONMENT", "production")
+	t.Setenv("ALLOWED_GITHUB_USERS", "octocat, Mona")
+	if !githubUserAllowed("mona") || githubUserAllowed("mallory") {
+		t.Fatal("production GitHub allowlist was not enforced")
+	}
+	t.Setenv("ENVIRONMENT", "development")
+	t.Setenv("ALLOWED_GITHUB_USERS", "")
+	if !githubUserAllowed("any-local-user") {
+		t.Fatal("development should allow login without an allowlist")
+	}
+}

@@ -42,6 +42,9 @@ Thumbs.db
 *.log
 logs/
 
+# Benchmark reports
+results/
+
 # Database
 *.sqlite
 *.db

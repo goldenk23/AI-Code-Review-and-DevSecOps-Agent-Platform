@@ -18,7 +18,7 @@ func validateDeploymentConfig() error {
 	required := []string{
 		"DATABASE_URL", "REDIS_ADDR", "GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET",
 		"GITHUB_WEBHOOK_SECRET", "TOKEN_ENCRYPTION_KEY", "PORT", "GITHUB_CALLBACK_URL",
-		"API_KEY", "SESSION_SECRET", "CORS_ALLOWED_ORIGIN", "WORKER_METRICS_URL",
+		"API_KEY", "SESSION_SECRET", "ALLOWED_GITHUB_USERS", "CORS_ALLOWED_ORIGIN", "WORKER_METRICS_URL",
 	}
 	for _, name := range required {
 		if strings.TrimSpace(os.Getenv(name)) == "" {
@@ -33,8 +33,11 @@ func validateDeploymentConfig() error {
 		}
 	}
 	databaseURL, err := url.Parse(os.Getenv("DATABASE_URL"))
+	if err != nil || databaseURL.Host == "" || databaseURL.User == nil {
+		return fmt.Errorf("DATABASE_URL must use non-development credentials")
+	}
 	password, hasPassword := databaseURL.User.Password()
-	if err != nil || databaseURL.Host == "" || !hasPassword || password == "reviewpass" || strings.Contains(password, "replace-with") {
+	if !hasPassword || password == "reviewpass" || strings.Contains(password, "replace-with") {
 		return fmt.Errorf("DATABASE_URL must use non-development credentials")
 	}
 

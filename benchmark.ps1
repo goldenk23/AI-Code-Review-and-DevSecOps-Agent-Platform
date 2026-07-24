@@ -28,11 +28,14 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $root
 
-$results = @()
+$script:results = @()
 $spawnedProcs = @()
 
 function Row($name, $value, $unit, $notes) {
-    $results += [pscustomobject]@{
+    # $script: scope is required -- a bare `$results +=` inside a function
+    # creates a function-local copy, leaving the script-level array empty so
+    # the summary table + saved report would come out blank.
+    $script:results += [pscustomobject]@{
         Metric = $name; Value = $value; Unit = $unit; Notes = $notes
     }
 }
@@ -554,7 +557,7 @@ if ($spawnedProcs.Count -gt 0) {
 }
 
 # -----------------------------------------------------------------------------
-# Summary table
+# Summary table + saved report
 # -----------------------------------------------------------------------------
 if ($results.Count -gt 0) {
     Write-Host "`n========================================" -ForegroundColor Green
@@ -562,4 +565,45 @@ if ($results.Count -gt 0) {
     Write-Host "========================================" -ForegroundColor Green
     $results | Format-Table -AutoSize
     Write-Host "Copy these numbers into your resume bullet." -ForegroundColor Green
+
+    # Persist results so runs aren't lost when the terminal scrolls away. We
+    # write two files per run into ./results/, stamped with the local time so
+    # successive runs never clobber each other:
+    #   - .md  : human-readable report (run metadata + a Markdown table)
+    #   - .csv : the same rows, machine-readable for diffing/plotting later
+    # A stable "latest.md" copy is also refreshed so you always have one path
+    # to open without hunting for the newest timestamp.
+    $resultsDir = Join-Path $root "results"
+    New-Item -ItemType Directory -Path $resultsDir -Force | Out-Null
+    $stamp    = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
+    $mdPath   = Join-Path $resultsDir "benchmark_$stamp.md"
+    $csvPath  = Join-Path $resultsDir "benchmark_$stamp.csv"
+
+    # Markdown report: escape any pipe characters in a cell so they don't break
+    # the table layout (Notes occasionally contain punctuation).
+    $md = @()
+    $md += "# Benchmark results"
+    $md += ""
+    $md += "- **Date:** $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz')"
+    $md += "- **Host:** $env:COMPUTERNAME"
+    $md += "- **Scope (-Only):** $Only"
+    $md += "- **Webhooks (-Count):** $Count"
+    $md += ""
+    $md += "| Metric | Value | Unit | Notes |"
+    $md += "| --- | --- | --- | --- |"
+    foreach ($r in $results) {
+        $cells = @($r.Metric, $r.Value, $r.Unit, $r.Notes) |
+            ForEach-Object { ("{0}" -f $_) -replace "\|", "\|" }
+        $md += "| $($cells[0]) | $($cells[1]) | $($cells[2]) | $($cells[3]) |"
+    }
+    $md += ""
+    Set-Content -Path $mdPath -Value ($md -join "`r`n") -Encoding UTF8
+    Copy-Item $mdPath (Join-Path $resultsDir "latest.md") -Force
+
+    # CSV: quote-safe export straight from the objects.
+    $results | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8
+
+    Write-Host "`nSaved report:" -ForegroundColor Cyan
+    Write-Host "    $mdPath"  -ForegroundColor Cyan
+    Write-Host "    $csvPath" -ForegroundColor Cyan
 }

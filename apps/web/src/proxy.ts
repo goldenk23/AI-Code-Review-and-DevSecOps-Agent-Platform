@@ -31,6 +31,15 @@ const PUBLIC_PATHS = [
 
 type SessionClaims = { uid: number; username: string; exp: number };
 
+function isAllowedUsername(username: string): boolean {
+  const configured = process.env.ALLOWED_GITHUB_USERS?.trim();
+  if (!configured) {
+    const environment = process.env.ENVIRONMENT?.toLowerCase() ?? "development";
+    return environment === "development" || environment === "test";
+  }
+  return configured.split(",").some((allowed) => allowed.trim().toLowerCase() === username.toLowerCase());
+}
+
 function hasValidSession(token: string | undefined): boolean {
   const secret = process.env.SESSION_SECRET;
   if (!token || !secret || secret.length < 32) return false;
@@ -41,7 +50,7 @@ function hasValidSession(token: string | undefined): boolean {
     const expected = createHmac("sha256", secret).update(payload).digest();
     if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return false;
     const claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as SessionClaims;
-    return Number.isInteger(claims.uid) && claims.uid > 0 && Boolean(claims.username) && claims.exp > Date.now() / 1000;
+    return Number.isInteger(claims.uid) && claims.uid > 0 && Boolean(claims.username) && claims.exp > Date.now() / 1000 && isAllowedUsername(claims.username);
   } catch {
     return false;
   }
@@ -69,18 +78,25 @@ export function proxy(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // For dashboard->API calls that Next rewrites to the Go API, inject the
-  // shared API key server-side. The browser never sees it (this runs on the
-  // server), and the Go API rejects any /api request without it -- so hitting
-  // the API host directly, bypassing this proxy, fails. Setting it via
-  // `request.headers` propagates the header upstream to the rewrite target.
-  if (pathname.startsWith("/api/")) {
+  // Rewrite server-side at request time so one image can use a different
+  // API_INTERNAL_URL in every deployment. Strip caller-supplied service
+  // headers before injecting the real key.
+  let upstreamPath: string | null = null;
+  if (pathname === "/auth/github") upstreamPath = "/auth/github";
+  else if (pathname === "/api/auth/exchange") upstreamPath = "/auth/github/callback";
+  else if (pathname === "/api/auth/session") upstreamPath = "/auth/session";
+  else if (pathname === "/api/auth/logout") upstreamPath = "/auth/logout";
+  else if (pathname.startsWith("/api/")) upstreamPath = pathname;
+
+  if (upstreamPath) {
+    const target = new URL(upstreamPath, process.env.API_INTERNAL_URL ?? "http://localhost:8080");
+    target.search = request.nextUrl.search;
+    const headers = new Headers(request.headers);
+    headers.delete("x-api-key");
+    headers.delete("x-internal-request");
     const apiKey = process.env.API_KEY;
-    if (apiKey) {
-      const headers = new Headers(request.headers);
-      headers.set("x-api-key", apiKey);
-      return NextResponse.next({ request: { headers } });
-    }
+    if (apiKey) headers.set("x-api-key", apiKey);
+    return NextResponse.rewrite(target, { request: { headers } });
   }
 
   return NextResponse.next();

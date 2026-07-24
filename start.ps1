@@ -51,6 +51,37 @@ function Stop-Tree($processId) {
     try { Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue } catch { }
 }
 
+function Stop-AiService {
+    # Reap stale ai-service uvicorn processes so a fresh launch actually binds
+    # :8000. This is the bug behind "I edited .env / restarted but nothing
+    # changed": uvicorn `--workers N` spawns multiprocessing children that hold
+    # the :8000 socket via fd inheritance. Killing only the current port owner
+    # (the fallback below) leaves the non-listening masters AND their forks
+    # alive; across restarts they pile up, one wins the bind race (others log
+    # WinError 10022 and die), and a STALE instance keeps answering /review with
+    # whatever .env it captured at ITS launch. So edits to model/timeout/endpoint
+    # silently do nothing until the real owner is killed.
+    #
+    # Masters carry our venv path -> match + Stop-Tree (kills each master AND its
+    # live forks). The forks themselves re-exec the BASE python (spawn), so they
+    # can't be matched by project path; instead sweep any 'spawn_main' fork whose
+    # parent is already gone -- a safe orphan test that never touches live tools
+    # (Kiro's language servers aren't spawn_main and keep their parents alive).
+    Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
+        Where-Object { $_.CommandLine -like "*$root\apps\ai-service*uvicorn*main:app*" } |
+        ForEach-Object {
+            Write-Host "    killing orphaned ai-service (PID $($_.ProcessId))"
+            Stop-Tree $_.ProcessId
+        }
+    $live = @{}; Get-CimInstance Win32_Process | ForEach-Object { $live[[int]$_.ProcessId] = $true }
+    Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
+        Where-Object { $_.CommandLine -like "*multiprocessing*spawn_main*" -and -not $live[[int]$_.ParentProcessId] } |
+        ForEach-Object {
+            Write-Host "    killing orphaned python fork (PID $($_.ProcessId))"
+            try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch { }
+        }
+}
+
 function Stop-AllChildren {
     foreach ($p in $script:procs) {
         if ($p -and -not $p.HasExited) { Stop-Tree $p.Id }
@@ -75,6 +106,7 @@ function Stop-AllChildren {
     Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
         Where-Object { $_.CommandLine -like "*$root\apps\worker*worker.py*" } |
         ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch { } }
+    Stop-AiService
     # Belt + braces: free the ports we're about to bind, regardless of process
     # name. If ANYTHING is listening on 3000/8080/8000, kill its owner.
     foreach ($port in 3000, 8080, 8000) {
@@ -123,6 +155,7 @@ Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
         Write-Host "    killing orphaned worker (PID $($_.ProcessId))"
         try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch { }
     }
+Stop-AiService
 foreach ($port in 3000, 8080, 8000) {
     $owner = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
     foreach ($conn in $owner) {
@@ -219,14 +252,13 @@ foreach ($py in @("apps/worker", "apps/ai-service")) {
         Write-Step "Creating venv for $py (first run only)"
         python -m venv $venv
         $pip = Join-Path $venv "Scripts\pip.exe"
-        # Pick whichever requirements file the app ships with.
-        if (Test-Path (Join-Path $py "requirements.txt")) {
-            $req = Join-Path $py "requirements.txt"
-        } elseif (Test-Path (Join-Path $py "requirements_template.txt")) {
-            $req = Join-Path $py "requirements_template.txt"
-        } else {
-            $req = $null
-        }
+        # Pick whichever requirements file the app ships with. The worker
+        # ships requirement.txt (singular -- intentional, see AGENTS.md/CI),
+        # ai-service ships requirements.txt (plural), so try both spellings.
+        $req = @("requirements.txt", "requirement.txt", "requirements_template.txt") |
+            ForEach-Object { Join-Path $py $_ } |
+            Where-Object { Test-Path $_ } |
+            Select-Object -First 1
         if (-not $req) {
             Write-Host "    (no requirements file in $py -- skipping pip install)"
         } else {

@@ -13,6 +13,7 @@ func setValidDeploymentConfig(t *testing.T) {
 		"GITHUB_WEBHOOK_SECRET": strings.Repeat("w", 32), "TOKEN_ENCRYPTION_KEY": strings.Repeat("ab", 32),
 		"PORT": "8080", "GITHUB_CALLBACK_URL": "https://review.example.com/auth/github/callback",
 		"API_KEY": strings.Repeat("a", 32), "SESSION_SECRET": strings.Repeat("s", 32),
+		"ALLOWED_GITHUB_USERS": "octocat",
 		"CORS_ALLOWED_ORIGIN": "https://review.example.com", "WORKER_METRICS_URL": "http://worker:9090/metrics",
 	}
 	for key, value := range values {
@@ -44,6 +45,12 @@ func TestValidateDeploymentConfigRejectsMissingOrInsecureValues(t *testing.T) {
 	t.Setenv("API_KEY", "replace-with-64-hex-charactersxxxxxxxx")
 	if err := validateDeploymentConfig(); err == nil {
 		t.Fatal("placeholder API_KEY was accepted")
+	}
+
+	setValidDeploymentConfig(t)
+	t.Setenv("DATABASE_URL", "://malformed")
+	if err := validateDeploymentConfig(); err == nil {
+		t.Fatal("malformed DATABASE_URL was accepted")
 	}
 }
 

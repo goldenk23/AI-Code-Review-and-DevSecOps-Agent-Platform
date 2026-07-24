@@ -5,7 +5,13 @@ from dotenv import load_dotenv
 
 from agent import AgentLoop
 
-load_dotenv()
+# override=True: the .env file is the source of truth. Without it, python-dotenv
+# does NOT overwrite variables already present in the process environment -- and
+# start.ps1 injects the ai-service .env into its own env before launching us, so
+# a value that was correct when the launcher started would shadow a later .env
+# edit. Making .env win means editing .env + restarting THIS process is always
+# enough; no stale inherited value can survive.
+load_dotenv(override=True)
 
 if not os.getenv("OPENCODE_GO_API_KEY"):
     raise RuntimeError("OPENCODE_GO_API_KEY is required")

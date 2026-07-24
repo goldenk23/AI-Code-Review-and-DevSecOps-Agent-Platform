@@ -82,6 +82,14 @@ Respond with ONLY the JSON array, no prose, no markdown fences.
         self.base_url = (base_url or os.getenv("OPENCODE_GO_BASE_URL", DEFAULT_BASE_URL)).rstrip("/")
         self.max_tokens = int(max_tokens or os.getenv("OPENCODE_GO_MAX_TOKENS", DEFAULT_MAX_TOKENS))
         self.timeout = int(timeout or os.getenv("OPENCODE_GO_TIMEOUT", DEFAULT_TIMEOUT))
+        # Reasoning models (e.g. DashScope's glm-5.2 / Qwen "thinking" variants)
+        # emit a long `reasoning_content` phase before the real answer. On a big
+        # review prompt that blows the request timeout and can consume the whole
+        # max_tokens budget, leaving `content` empty (0 findings). Disabling
+        # thinking makes the model answer directly -- far faster and reliable.
+        # Set OPENCODE_GO_ENABLE_THINKING=true to opt back in (needs a bigger
+        # OPENCODE_GO_TIMEOUT/max_tokens to actually finish).
+        self.enable_thinking = os.getenv("OPENCODE_GO_ENABLE_THINKING", "false").strip().lower() in ("1", "true", "yes")
         self.endpoint = f"{self.base_url}/chat/completions"
         self.client = httpx.Client(timeout=self.timeout)
 
@@ -124,6 +132,12 @@ Respond with ONLY the JSON array, no prose, no markdown fences.
             "temperature": DEFAULT_TEMPERATURE,
             "max_tokens": self.max_tokens,
         }
+        # DashScope/OpenAI-compatible flag to skip the model's reasoning phase.
+        # We only send it when disabling (the common case); sending it to a
+        # provider that doesn't understand the key is harmless for DashScope,
+        # but omitting it when thinking is desired keeps other providers happy.
+        if not self.enable_thinking:
+            payload["enable_thinking"] = False
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
