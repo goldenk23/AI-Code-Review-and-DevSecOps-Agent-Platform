@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirement.txt .
-RUN pip install --no-cache-dir -r requirement.txt semgrep
+RUN pip install --no-cache-dir -r requirement.txt
 
 COPY . .
 # No EXPOSE — the worker pulls from Redis, doesn't serve HTTP.
