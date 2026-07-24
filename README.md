@@ -27,6 +27,10 @@ The project demonstrates production-oriented backend concerns across service bou
 
 ## Architecture
 
+<details>
+<summary><strong>Click to expand — full architecture diagram</strong></summary>
+<br>
+
 ```mermaid
 flowchart LR
     GH[GitHub PR / OAuth] -->|OAuth + signed webhook| API[Go API · chi]
@@ -45,6 +49,8 @@ flowchart LR
     CADDY[Caddy · HTTPS] --> WEB
     CADDY --> API
 ```
+
+</details>
 ## End-to-end review lifecycle
 
 1. A user signs in with GitHub. The API validates a short-lived OAuth state value, syncs accessible repositories, encrypts the OAuth token with AES-256-GCM, and creates a signed `HttpOnly` session.
