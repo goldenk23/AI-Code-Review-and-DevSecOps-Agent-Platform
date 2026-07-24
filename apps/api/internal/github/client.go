@@ -90,6 +90,15 @@ func (c *client) CreateWebhook(ctx context.Context, owner, repo, webhookURL, sec
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusCreated {
+		// 422 means a webhook with this URL already exists (e.g. a prior
+		// connect attempt created the hook but failed before saving to the
+		// DB). Make this idempotent: look up the existing hook and return
+		// its ID so the caller can proceed to persist the repo.
+		if resp.StatusCode == http.StatusUnprocessableEntity {
+			if id, findErr := c.findWebhookByURL(ctx, owner, repo, webhookURL, token); findErr == nil && id != 0 {
+				return id, nil
+			}
+		}
 		return 0, fmt.Errorf("GitHub returned %d: %s", resp.StatusCode, string(respBody))
 	}
 	var hook Webhook
@@ -97,6 +106,39 @@ func (c *client) CreateWebhook(ctx context.Context, owner, repo, webhookURL, sec
 		return 0, fmt.Errorf("decode webhook response: %w", err)
 	}
 	return hook.ID, nil
+}
+
+// findWebhookByURL lists the repo's webhooks and returns the ID of the one
+// whose config URL matches webhookURL, or 0 if none match.
+func (c *client) findWebhookByURL(ctx context.Context, owner, repo, webhookURL, token string) (int64, error) {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/hooks", owner, repo)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return 0, fmt.Errorf("list webhooks request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "AI-Code-Review-Bot")
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("list webhooks: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("list webhooks returned %d: %s", resp.StatusCode, string(respBody))
+	}
+	var hooks []Webhook
+	if err := json.Unmarshal(respBody, &hooks); err != nil {
+		return 0, fmt.Errorf("decode webhooks list: %w", err)
+	}
+	for _, h := range hooks {
+		if h.Config.URL == webhookURL {
+			return h.ID, nil
+		}
+	}
+	return 0, nil
 }
 
 // DeleteWebhook removes a webhook from the given repo.
